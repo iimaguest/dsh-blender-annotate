@@ -1,6 +1,6 @@
 {
   "name": "dsh-preview-blender",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Preview Blender .blend files inside DeepSeek Harness: the Host half exports a cached GLB with Blender headless and the right-Sidebar document preview draws it in an interactive WebGL viewport with scene statistics.",
   "type": "module",
   "license": "MIT",
@@ -54,7 +54,8 @@
     "compatibility": {
       "dshReleases": {
         "0.2.0-rc.2": "compatible",
-        "0.2.1-rc.2": "compatible"
+        "0.2.1-rc.2": "compatible",
+        "0.2.2-rc.1": "compatible"
       }
     }
   },
