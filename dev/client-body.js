@@ -77,10 +77,12 @@ window.__ModuleLoader__.load({
       cancel: "取消",
       goTo: "定位",
       remove: "删除",
-      details: "详细参数",
+      parameters: "详细参数",
       noAnnotations: "还没有标注。打开「标注」后点击模型。",
       noHit: "没有点中模型表面",
       sent: "已把标注写入输入框",
+      sentNoSnapshot: "标注已写入输入框，但截图附加失败",
+      saveFirst: "请先保存或取消当前标注",
       sketchAdded: "已把草图插入输入框",
       sendFailed: "无法写入输入框",
       stale: "文件已变更",
@@ -145,10 +147,12 @@ window.__ModuleLoader__.load({
       cancel: "Cancel",
       goTo: "Go to",
       remove: "Delete",
-      details: "Parameters",
+      parameters: "Parameters",
       noAnnotations: "No annotations yet. Turn on Annotate, then click the model.",
       noHit: "That click did not land on the model",
       sent: "Annotations added to the composer",
+      sentNoSnapshot: "Annotations added, but the snapshot could not be attached",
+      saveFirst: "Save or cancel the current annotation first",
       sketchAdded: "Sketch added to the composer",
       sendFailed: "Could not write to the composer",
       stale: "file changed",
@@ -361,9 +365,36 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Blender's exact world matrix for a node, converted to glTF space, or null.
+     * Used only for a uniquely named, non-instanced object whose exported origin
+     * agrees with Blender's, so an instanced copy that shares a name is never moved.
+     */
+    function exactWorldFor(annotate) {
+      if (!annotate || !annotate.objects) return null;
+      const objects = annotate.objects;
+      const byName = {};
+      for (const key of Object.keys(objects)) (byName[objects[key].name || key] ||= []).push(key);
+      const C = [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
+      const Cinv = [1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1];
+      return (name, ancestors, computed) => {
+        const keys = byName[name];
+        if (!keys || keys.length !== 1) return null;
+        if (ancestors.includes(name)) return null; // geometry-nodes instance named after its owner
+        for (const ancestor of ancestors) {
+          const owner = byName[ancestor];
+          if (owner && owner.some((key) => objects[key].instance_collection)) return null;
+        }
+        const exact = m4mul(m4mul(C, rowsToColumnMajor(objects[keys[0]].matrix_world)), Cinv);
+        const dx = exact[12] - computed[12], dy = exact[13] - computed[13], dz = exact[14] - computed[14];
+        const scale = 1 + Math.hypot(exact[12], exact[13], exact[14]);
+        return Math.hypot(dx, dy, dz) <= 1e-4 * scale ? exact : null;
+      };
+    }
+
     /** Overlay geometry (glTF world) emphasising an annotation's target. */
     function overlayFor(viewer, item) {
-      if (viewer === null || !item || !item.hit) return null;
+      if (viewer === null || !item || !item.hit || item.stale) return null;
       const r = item.resolved;
       const hit = item.hit;
       const outline = (points) => {
@@ -412,7 +443,7 @@ window.__ModuleLoader__.load({
       const radius = 11 * scale;
       items.forEach((item, index) => {
         const at = viewer.project(item.anchor);
-        if (!at.visible) return;
+        if (!at.visible || item.stale) return;
         const x = at.x * scale, y = at.y * scale;
         context.beginPath();
         context.arc(x, y, radius, 0, Math.PI * 2);
@@ -439,14 +470,41 @@ window.__ModuleLoader__.load({
       });
     }
 
+    function payloadUnit(item) {
+      const unit = item.source && item.source.mmPerUnit;
+      return typeof unit === "number" && unit > 0 ? unit : 1000;
+    }
+
     /** Markdown the agent receives: one block per annotation, numbered like the pins. */
     function buildMessage(t, fileName, filePath, items) {
       const lines = [`### ${t("messageTitle")} — \`${fileName}\``, `File: \`${filePath}\``, ""];
       items.forEach((item, index) => {
         lines.push(`**${index + 1}. ${item.comment.trim() || "(no comment)"}**`);
         lines.push(item.resolved ? describeResolved(item.resolved, item.target) : `- target: ${item.target}`);
-        if (item.stale) lines.push("- note: recorded on an earlier version of this file");
-        lines.push("");
+        if (item.source) {
+          lines.push(`- source revision: ${JSON.stringify(item.source.version)} · export cache key: ${item.source.cacheKey || "unavailable"}`);
+        }
+        if (item.stale) lines.push("- note: recorded on an earlier version of this file; do not use its indices on the current geometry without revalidation");
+        const r = item.resolved;
+        const anchorWorldMm = r && item.anchor ? v3scale(yupToZup(item.anchor), payloadUnit(item)) : null;
+        if (anchorWorldMm && (item.target === "edge" || item.target === "vertex")) {
+          lines.push(`- snapped target point (world): ${fmtVec(anchorWorldMm, 6)} mm; point/UV/face parameters above describe the original surface click`);
+        }
+        const reference = {
+          schema: "dsh.blender.annotation.v1",
+          id: item.id,
+          source: item.source || { path: filePath, version: null },
+          target: item.target,
+          comment: item.comment,
+          stale: Boolean(item.stale),
+          object: r ? { name: r.object, key: r.objectKey, library: r.library, instancer: r.instancer } : null,
+          sourceElement: r ? { mesh: r.mesh, face: r.face, sourceObject: r.sourceObject, sourceLibrary: r.sourceLibrary, edge: item.target === "edge" ? r.edge : null, vertex: item.target === "vertex" ? r.vertex : null, provenance: r.precision } : null,
+          surface: r ? r.evaluated : null,
+          pickedPoint: r ? { localMm: r.localMm, worldMm: r.worldMm, normal: r.normal, uv: r.uv, sourceFaceParameters: r.params } : null,
+          targetPointWorldMm: anchorWorldMm,
+          view: item.view,
+        };
+        lines.push("```json", JSON.stringify(reference), "```", "");
       });
       return lines.join("\n");
     }
@@ -554,8 +612,10 @@ window.__ModuleLoader__.load({
         if (startRef.current === null) return;
         startRef.current = null;
         setDraft((previous) => {
-          if (previous !== null && Math.abs(previous.x2 - previous.x1) > 2 && Math.abs(previous.y2 - previous.y1) > 2) {
-            setShapes((now) => [...now, previous]);
+          if (previous !== null) {
+            const dx = Math.abs(previous.x2 - previous.x1), dy = Math.abs(previous.y2 - previous.y1);
+            const drawable = previous.type === "arrow" ? Math.hypot(dx, dy) > 2 : dx > 2 && dy > 2;
+            if (drawable) setShapes((now) => [...now, previous]);
           }
           return null;
         });
@@ -659,6 +719,8 @@ window.__ModuleLoader__.load({
       const [sketch, setSketch] = React.useState(null);
       const resolverRef = React.useRef(null);
       const loadedRef = React.useRef(false);
+      const loadedVersionRef = React.useRef(null);
+      const loadedPathRef = React.useRef(null);
       const pinElements = React.useRef({});
       const pinItemsRef = React.useRef([]);
       const occlusionAt = React.useRef(0);
@@ -684,6 +746,10 @@ window.__ModuleLoader__.load({
       clickRef.current = (clientX, clientY) => {
         const viewer = viewerRef.current;
         if (!annotating || viewer === null || state !== "ready") return;
+        if (draft !== null && draft.comment.trim() !== "") {
+          flash(t("saveFirst"));
+          return;
+        }
         const hit = viewer.pick(clientX, clientY);
         if (hit === null) {
           flash(t("noHit"));
@@ -693,8 +759,18 @@ window.__ModuleLoader__.load({
         const item = {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
           target,
-          hit: { nodeIndex: hit.nodeIndex, nodeName: hit.nodeName, srcId: hit.srcId, faceId: hit.faceId, point: hit.point, normal: hit.normal },
+          hit: { ...hit },
           resolved,
+          source: {
+            path: absolutePath,
+            version,
+            cacheKey: payload && payload.cache ? payload.cache.key || null : null,
+            bytes: payload && payload.file ? payload.file.bytes : null,
+            mtimeMs: payload && payload.file ? payload.file.mtimeMs : null,
+            recipe: payload && payload.scene ? payload.scene.recipe : null,
+            mmPerUnit: payload && payload.scene && payload.scene.unit ? payload.scene.unit.millimeters_per_unit : 1000,
+            frame: payload && payload.scene ? payload.scene.frame : null,
+          },
           view: viewer.getView(),
           comment: "",
           stale: false,
@@ -721,7 +797,7 @@ window.__ModuleLoader__.load({
           const element = pinElements.current[item.id];
           if (!element) continue;
           const at = viewer.project(item.anchor);
-          const offscreen = !at.visible || at.x < -12 || at.y < -12 || at.x > rect.width + 12 || at.y > rect.height + 12;
+          const offscreen = item.stale || !at.visible || at.x < -12 || at.y < -12 || at.x > rect.width + 12 || at.y > rect.height + 12;
           element.dataset.offscreen = offscreen ? "true" : "false";
           if (offscreen) continue;
           element.style.transform = `translate(${at.x}px, ${at.y}px)`;
@@ -744,9 +820,9 @@ window.__ModuleLoader__.load({
 
       // Persist per file; annotations from an older file version are kept and flagged.
       React.useEffect(() => {
-        if (!loadedRef.current || absolutePath === undefined) return;
-        storeAnnotations(absolutePath, version, annotations);
-      }, [annotations, absolutePath, version]);
+        if (!loadedRef.current || loadedPathRef.current === null) return;
+        storeAnnotations(loadedPathRef.current, loadedVersionRef.current, annotations);
+      }, [annotations]);
 
       const settle = React.useCallback(
         (ok, fileVersion) => {
@@ -841,14 +917,16 @@ window.__ModuleLoader__.load({
               code: "WEBGL_MISSING",
             };
           }
-          const modelStats = viewer.setModel(bytes);
           const sceneInfo = infoBody && infoBody.scene ? infoBody.scene : null;
+          const modelStats = viewer.setModel(bytes, { worldFor: exactWorldFor(sceneInfo ? sceneInfo.annotate : null) });
           resolverRef.current = sceneInfo && sceneInfo.annotate
             ? createResolver(sceneInfo.annotate, sceneInfo.unit ? sceneInfo.unit.millimeters_per_unit : 1000)
             : null;
           const stored = loadAnnotations(absolutePath);
           const changed = stored.version !== null && stored.version !== version;
           loadedRef.current = true;
+          loadedPathRef.current = absolutePath;
+          loadedVersionRef.current = version;
           setAnnotations(stored.items.map((item) => (changed ? { ...item, stale: true } : item)));
           if (stored.items.length > 0) setPanelTab("annotations");
           setDraft(null);
@@ -940,6 +1018,7 @@ window.__ModuleLoader__.load({
       const send = async () => {
         const viewer = viewerRef.current;
         if (annotations.length === 0 || viewer === null) return;
+        if (draft !== null) { flash(t("saveFirst")); return; }
         if (inputActions === undefined || typeof inputActions.setDraft !== "function") {
           flash(t("sendFailed"));
           return;
@@ -947,13 +1026,14 @@ window.__ModuleLoader__.load({
         const message = buildMessage(t, name, absolutePath, annotations);
         const current = typeof composerDraft === "string" ? composerDraft : "";
         inputActions.setDraft(current.trim() === "" ? message : `${current}\n\n${message}`);
+        let attached = false;
         try {
           const file = await canvasToFile(snapshotWithPins(viewer, annotations), "blender-annotations");
-          attachFiles([file]);
+          attached = attachFiles([file]);
         } catch (error) {
           console.warn("[blender-annotate] snapshot not attached:", error);
         }
-        flash(t("sent"));
+        flash(t(attached ? "sent" : "sentNoSnapshot"));
       };
 
       const openSketch = () => {
@@ -1196,7 +1276,7 @@ window.__ModuleLoader__.load({
                 ? React.createElement(
                     "details",
                     { className: "dsh-ba-details" },
-                    React.createElement("summary", null, t("details")),
+                    React.createElement("summary", null, t("parameters")),
                     React.createElement("pre", null, describeResolved(draft.resolved, draft.target))
                   )
                 : null,

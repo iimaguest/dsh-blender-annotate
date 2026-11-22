@@ -42,11 +42,14 @@ from mathutils import Vector
 
 # Bumped when the JSON contract or the export calls change; the Host folds this
 # into its cache key, so an upgrade re-converts rather than serving stale data.
-RECIPE = 2
+RECIPE = 3
 
 # Source geometry beyond this many vertices (summed over meshes) is not written
 # to the scene JSON; those meshes still carry face/vertex ids in the GLB.
 MAX_SOURCE_VERTICES = 400_000
+
+# Attribute names the plugin owns, as the glTF exporter writes them (upper-case).
+TAG_NAMES = {"_DSH_FACE", "_DSH_VERT", "_DSH_SRC"}
 
 
 def json_value(value):
@@ -68,8 +71,75 @@ def matrix_rows(matrix):
     return [[round(float(matrix[r][c]), 7) for c in range(4)] for r in range(4)]
 
 
+def object_keys():
+    """Key per object: its name, or name_full for a linked object whose name a local object also uses."""
+    counts = {}
+    for ob in bpy.data.objects:
+        counts[ob.name] = counts.get(ob.name, 0) + 1
+    return lambda ob: ob.name if counts.get(ob.name, 0) == 1 or ob.library is None else ob.name_full
+
+
+def rename_instance_nodes(glb_path):
+    """Name mesh nodes the exporter calls "GN Instance" after their parent (the object owning the node tree)."""
+    import struct
+    with open(glb_path, "rb") as handle:
+        data = handle.read()
+    json_length, json_type = struct.unpack_from("<II", data, 12)
+    if json_type != 0x4E4F534A:
+        return
+    document = json.loads(data[20:20 + json_length].decode("utf-8"))
+    nodes = document.get("nodes", [])
+    parent = {}
+    for index, node in enumerate(nodes):
+        for child in node.get("children", []):
+            parent[child] = index
+    changed = False
+    for index, node in enumerate(nodes):
+        name = node.get("name", "")
+        if "mesh" in node and name.startswith("GN Instance") and index in parent:
+            owner = nodes[parent[index]].get("name")
+            if owner:
+                node["name"] = owner
+                node.setdefault("extras", {})["dsh_instance"] = name
+                changed = True
+    if not changed:
+        return
+    body = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    body += b" " * ((4 - len(body) % 4) % 4)
+    rest = data[20 + json_length:]
+    total = 12 + 8 + len(body) + len(rest)
+    with open(glb_path, "wb") as handle:
+        handle.write(struct.pack("<III", 0x46546C67, 2, total))
+        handle.write(struct.pack("<II", len(body), 0x4E4F534A))
+        handle.write(body)
+        handle.write(rest)
+
+
 def tag_sources():
     """Tag every mesh with source ids and describe the source geometry."""
+    key_of = object_keys()
+    original_name = {}  # private copy name_full -> the mesh name the .blend actually has
+    # A Boolean operand that shares its mesh with another object (a linked
+    # duplicate, or the body itself) would make cut faces ambiguous; give each
+    # such operand a private in-memory copy so its faces carry its own id.
+    for ob in bpy.data.objects:
+        for modifier in ob.modifiers:
+            if modifier.type != "BOOLEAN":
+                continue
+            operands = []
+            if getattr(modifier, "operand_type", "OBJECT") == "COLLECTION" and modifier.collection is not None:
+                operands = list(modifier.collection.all_objects)
+            elif modifier.object is not None:
+                operands = [modifier.object]
+            for operand in operands:
+                if operand.type == "MESH" and operand.data is not None and operand.data.users > 1 and operand.library is None:
+                    try:
+                        shared_name = operand.data.name
+                        operand.data = operand.data.copy()
+                        original_name[operand.data.name_full] = shared_name
+                    except Exception:
+                        pass
+
     mesh_list, mesh_index = [], {}
     for ob in bpy.data.objects:
         if ob.type == "MESH" and ob.data is not None and ob.data.name_full not in mesh_index:
@@ -80,7 +150,7 @@ def tag_sources():
     meshes = []
     for i, me in enumerate(mesh_list):
         entry = {
-            "name": me.name,
+            "name": original_name.get(me.name_full, me.name),
             "faces": len(me.polygons),
             "edges": len(me.edges),
             "vertices": len(me.vertices),
@@ -90,13 +160,15 @@ def tag_sources():
         try:
             if me.library is not None:
                 raise RuntimeError("linked library mesh is read-only")
+            # The exporter upper-cases attribute names, so any `_dsh_*` in any
+            # case (e.g. `_DSH_FACE` from re-importing a GLB) would collide.
+            for existing in [a.name for a in me.attributes if a.name.upper() in TAG_NAMES]:
+                me.attributes.remove(me.attributes[existing])
             for name, domain, count, fill in (
                 ("_dsh_face", "FACE", len(me.polygons), None),
                 ("_dsh_vert", "POINT", len(me.vertices), None),
                 ("_dsh_src", "FACE", len(me.polygons), i + 1),
             ):
-                if name in me.attributes:
-                    me.attributes.remove(me.attributes[name])
                 attribute = me.attributes.new(name, "INT", domain)
                 values = np.arange(1, count + 1, dtype=np.int32) if fill is None else np.full(count, fill, dtype=np.int32)
                 attribute.data.foreach_set("value", values)
@@ -134,6 +206,7 @@ def tag_sources():
         meshes.append(entry)
 
     objects = {}
+    instanced = set()
     for ob in bpy.data.objects:
         custom = {}
         for key in ob.keys():
@@ -147,22 +220,40 @@ def tag_sources():
             item = {"name": modifier.name, "type": modifier.type, "show_render": modifier.show_render}
             operand = getattr(modifier, "object", None)
             if operand is not None:
-                item["object"] = operand.name
+                item["object"] = key_of(operand)
+            if modifier.type == "BOOLEAN" and getattr(modifier, "operand_type", "OBJECT") == "COLLECTION" and modifier.collection is not None:
+                item["collection"] = modifier.collection.name_full
+                item["collection_objects"] = [key_of(o) for o in modifier.collection.all_objects]
             modifiers.append(item)
-        objects[ob.name] = {
+        entry = {
+            "name": ob.name,
             "type": ob.type,
-            "data": ob.data.name if ob.data is not None else None,
+            "data": original_name.get(ob.data.name_full, ob.data.name) if ob.data is not None else None,
             "mesh": mesh_index.get(ob.data.name_full, -1) if ob.type == "MESH" and ob.data is not None else -1,
             "matrix_world": matrix_rows(ob.matrix_world),
-            "parent": ob.parent.name if ob.parent is not None else None,
+            "parent": key_of(ob.parent) if ob.parent is not None else None,
             "collections": [c.name for c in ob.users_collection],
             "modifiers": modifiers,
             "material_slots": [slot.material.name if slot.material else None for slot in ob.material_slots],
             "custom": custom,
             "library": ob.library.filepath if ob.library is not None else None,
         }
+        if ob.instance_type == "COLLECTION" and ob.instance_collection is not None:
+            entry["instance_collection"] = ob.instance_collection.name_full
+            instanced.add(ob.instance_collection)
+        objects[key_of(ob)] = entry
+
+    # Collections used by instancers: their members and offset, so the viewer
+    # can tell which instancer an instanced copy belongs to.
+    collections = {}
+    for collection in instanced:
+        collections[collection.name_full] = {
+            "name": collection.name,
+            "offset": [round(float(v), 7) for v in collection.instance_offset],
+            "objects": [key_of(o) for o in collection.all_objects],
+        }
     bpy.context.view_layer.update()
-    return {"version": 1, "meshes": meshes, "objects": objects}
+    return {"version": 2, "meshes": meshes, "objects": objects, "collections": collections}
 
 
 def main():
@@ -186,12 +277,17 @@ def main():
     totals = {"vertices": 0, "polygons": 0, "triangles": 0}
     visible_meshes = 0
 
-    for ob in bpy.data.objects:
+    scene_objects = list(scene.objects)
+    for ob in scene_objects:
+        try:
+            visible = bool(ob.visible_get())
+        except Exception:
+            visible = not ob.hide_viewport and not ob.hide_get()
         entry = {
             "name": ob.name,
             "type": ob.type,
             "collections": [collection.name for collection in ob.users_collection],
-            "visible": not ob.hide_viewport and not ob.hide_get(),
+            "visible": visible,
             "parent": ob.parent.name if ob.parent is not None else None,
         }
         if ob.type == "MESH":
@@ -231,7 +327,7 @@ def main():
                         bounds_max[i] = max(bounds_max[i], high[i])
         objects.append(entry)
 
-    for ob in bpy.data.objects:
+    for ob in scene_objects:
         if ob.type != "MESH" and ob.type in {"LIGHT", "CAMERA", "EMPTY", "CURVE", "FONT"}:
             entry = next((item for item in objects if item["name"] == ob.name), None)
             if entry is not None and ob.type == "LIGHT":
@@ -264,12 +360,12 @@ def main():
         },
         "frame": {"current": scene.frame_current, "start": scene.frame_start, "end": scene.frame_end},
         "counts": {
-            "objects": len(bpy.data.objects),
-            "meshes": sum(1 for ob in bpy.data.objects if ob.type == "MESH"),
+            "objects": len(scene_objects),
+            "meshes": sum(1 for ob in scene_objects if ob.type == "MESH"),
             "visible_meshes": visible_meshes,
             "materials": len(bpy.data.materials),
-            "cameras": sum(1 for ob in bpy.data.objects if ob.type == "CAMERA"),
-            "lights": sum(1 for ob in bpy.data.objects if ob.type == "LIGHT"),
+            "cameras": sum(1 for ob in scene_objects if ob.type == "CAMERA"),
+            "lights": sum(1 for ob in scene_objects if ob.type == "LIGHT"),
             "collections": len(bpy.data.collections),
             "images": len(bpy.data.images),
             **totals,
@@ -285,7 +381,7 @@ def main():
     glb_tmp = glb_path[: -len(".glb")] + ".part.glb" if glb_path.endswith(".glb") else glb_path + ".part.glb"
     if os.path.exists(glb_tmp):
         os.remove(glb_tmp)
-    bpy.ops.export_scene.gltf(
+    export_options = dict(
         filepath=glb_tmp,
         export_format="GLB",
         export_apply=apply_modifiers,
@@ -294,9 +390,16 @@ def main():
         export_lights=False,
         export_yup=True,
         export_attributes=True,
+        export_gn_mesh=True,  # geometry-nodes instances (Blender 3.6+)
     )
+    try:
+        bpy.ops.export_scene.gltf(**export_options)
+    except TypeError:
+        export_options.pop("export_gn_mesh")
+        bpy.ops.export_scene.gltf(**export_options)
     if not os.path.exists(glb_tmp) or os.path.getsize(glb_tmp) == 0:
         raise RuntimeError("glTF exporter produced no GLB")
+    rename_instance_nodes(glb_tmp)
     os.replace(glb_tmp, glb_path)
 
     info_tmp = info_path + ".part"

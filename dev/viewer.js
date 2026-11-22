@@ -249,7 +249,9 @@
           if (v < 0 || u + v > 1) continue;
           var dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
           if (dist <= 1e-9 || (best !== null && dist >= best.distance)) continue;
-          best = { primitive: p, triangle: t / 3, distance: dist, u: u, v: v, normal: normalize(cross([e1x, e1y, e1z], [e2x, e2y, e2z])) };
+          var geometric = normalize(cross([e1x, e1y, e1z], [e2x, e2y, e2z]));
+          if (primitives[p].mirrored) geometric = [-geometric[0], -geometric[1], -geometric[2]];
+          best = { primitive: p, triangle: t / 3, distance: dist, u: u, v: v, normal: geometric };
         }
       }
       if (best === null) return null;
@@ -264,7 +266,6 @@
         uv[1] = 1 - uv[1]; // glTF flips V relative to Blender
       }
       var normal = best.normal;
-      if (dot(normal, d) > 0) normal = [-normal[0], -normal[1], -normal[2]];
       return {
         point: [o[0] + d[0] * best.distance, o[1] + d[1] * best.distance, o[2] + d[2] * best.distance],
         normal: normal,
@@ -273,7 +274,11 @@
         srcId: c.srcIds ? Math.round(c.srcIds[corners[0]]) : 0,
         vertIds: c.vertIds ? corners.map(function (i) { return Math.round(c.vertIds[i]); }) : null,
         nodeName: prim.node.name,
+        nodePath: prim.node.path ? prim.node.path.slice() : [prim.node.name],
         nodeIndex: prim.node.index,
+        meshPrimitive: prim.meshPrimitive,
+        triangle: best.triangle,
+        barycentric: w.slice(),
         nodeWorld: Array.prototype.slice.call(prim.node.world),
       };
     }
@@ -328,7 +333,7 @@
       if (hit === null) return true;
       var toPoint = Math.hypot(point[0] - camera.eye[0], point[1] - camera.eye[1], point[2] - camera.eye[2]);
       var toHit = Math.hypot(hit.point[0] - camera.eye[0], hit.point[1] - camera.eye[1], hit.point[2] - camera.eye[2]);
-      return toPoint <= toHit + state.radius * 0.01;
+      return toPoint <= toHit + state.radius * 1e-4 + toHit * 1e-6;
     }
 
     function drawGrid() {
@@ -504,9 +509,9 @@
       grid = uploadLines(positions, colors);
     }
 
-    function setModel(arrayBuffer) {
+    function setModel(arrayBuffer, modelOptions) {
       var parsed = parseGlb(arrayBuffer);
-      var uploaded = uploadScene(gl, parsed);
+      var uploaded = uploadScene(gl, parsed, modelOptions || {});
       for (var i = 0; i < primitives.length; i += 1) destroyPrimitive(primitives[i]);
       primitives = uploaded.primitives;
       bbox = uploaded.bbox;
@@ -559,6 +564,12 @@
         pointer = null;
       }
     }
+    function onPointerCancel(event) {
+      if (pointer !== null && pointer.id === event.pointerId) {
+        canvas.releasePointerCapture?.(event.pointerId);
+        pointer = null;
+      }
+    }
     function onWheel(event) {
       var scale = Math.exp(clamp(event.deltaY, -240, 240) * 0.0014);
       state.distance = clamp(state.distance * scale, state.radius * settings.minDistanceFactor, state.radius * settings.maxDistanceFactor);
@@ -588,7 +599,7 @@
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
-    canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("pointercancel", onPointerCancel);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("dblclick", onDoubleClick);
     canvas.addEventListener("keydown", onKeyDown);
@@ -624,7 +635,7 @@
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerup", onPointerUp);
-        canvas.removeEventListener("pointercancel", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerCancel);
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("dblclick", onDoubleClick);
         canvas.removeEventListener("keydown", onKeyDown);
@@ -673,7 +684,8 @@
     };
   }
 
-  function uploadScene(gl, parsed) {
+  function uploadScene(gl, parsed, modelOptions) {
+    var worldFor = modelOptions && typeof modelOptions.worldFor === "function" ? modelOptions.worldFor : null;
     var json = parsed.json;
     var materials = parsed.materials.map(function (material) {
       var pbr = material.pbrMetallicRoughness || {};
@@ -698,30 +710,44 @@
     var triangles = 0;
     var vertices = 0;
 
-    function visit(nodeIndex, parentMatrix) {
+    function visit(nodeIndex, parentMatrix, ancestors) {
       var node = parsed.nodes[nodeIndex];
       if (!node) return;
       var local = mat4Identity();
       if (Array.isArray(node.matrix) && node.matrix.length === 16) local.set(node.matrix);
       else if (node.translation || node.rotation || node.scale) local.set(mat4Compose(node.translation || [0, 0, 0], node.rotation || [0, 0, 0, 1], node.scale || [1, 1, 1]));
       var world = mat4Multiply(new Float32Array(16), parentMatrix, local);
+      // The exporter decomposes transforms into TRS and loses shear; a caller
+      // that knows Blender's exact matrix (non-skinned, non-instanced) supplies it.
+      if (worldFor !== null && node.skin === undefined) {
+        var exact = worldFor(node.name, ancestors || [], world);
+        if (exact) world = new Float32Array(exact);
+      }
+      var path = (ancestors || []).concat([node.name || ""]);
       if (node.mesh !== undefined) {
         var mesh = parsed.meshes[node.mesh];
         if (mesh) {
           for (var p = 0; p < (mesh.primitives || []).length; p += 1) {
-            var built = buildPrimitive(gl, parsed, mesh.primitives[p], materials, world, bbox, { index: nodeIndex, name: node.name || "node " + nodeIndex, world: world });
+            var built = buildPrimitive(gl, parsed, mesh.primitives[p], materials, world, bbox, {
+              index: nodeIndex,
+              name: node.name || "node " + nodeIndex,
+              path: path,
+              world: world,
+              weights: node.weights || mesh.weights || null,
+            });
             if (built === null) continue;
+            built.primitive.meshPrimitive = p;
             primitives.push(built.primitive);
             triangles += built.triangles;
             vertices += built.vertices;
           }
         }
       }
-      for (var c = 0; c < (node.children || []).length; c += 1) visit(node.children[c], world);
+      for (var c = 0; c < (node.children || []).length; c += 1) visit(node.children[c], world, path);
     }
 
     var identity = mat4Identity();
-    for (var r = 0; r < roots.length; r += 1) visit(roots[r], identity);
+    for (var r = 0; r < roots.length; r += 1) visit(roots[r], identity, []);
     if (!isFinite(bbox.min[0])) bbox = { min: [-1, -1, -1], max: [1, 1, 1] };
     return { primitives: primitives, bbox: bbox, triangles: triangles, vertices: vertices };
   }
@@ -733,6 +759,20 @@
     var positions = readAccessor(parsed, positionAccessor);
     if (positions === null) return null;
     var normals = primitive.attributes.NORMAL === undefined ? null : readAccessor(parsed, parsed.accessors[primitive.attributes.NORMAL]);
+    var weights = nodeInfo && nodeInfo.weights ? nodeInfo.weights : null;
+    if (Array.isArray(primitive.targets) && weights !== null) {
+      positions = new Float32Array(positions);
+      if (normals !== null) normals = new Float32Array(normals);
+      for (var mt = 0; mt < primitive.targets.length; mt += 1) {
+        var w = weights[mt] || 0;
+        if (w === 0) continue;
+        var target = primitive.targets[mt];
+        var dp = target.POSITION === undefined ? null : readAccessor(parsed, parsed.accessors[target.POSITION]);
+        if (dp !== null) for (var q = 0; q < positions.length; q += 1) positions[q] += w * dp[q];
+        var dn = normals !== null && target.NORMAL !== undefined ? readAccessor(parsed, parsed.accessors[target.NORMAL]) : null;
+        if (dn !== null) for (var qn = 0; qn < normals.length; qn += 1) normals[qn] += w * dn[qn];
+      }
+    }
     if (normals === null) normals = flatNormals(positions, primitive, parsed);
     var indices = primitive.indices === undefined ? null : readAccessor(parsed, parsed.accessors[primitive.indices]);
 
@@ -805,7 +845,9 @@
       roughness: material.roughness,
       metallic: material.metallic,
       doubleSided: material.doubleSided,
-      node: nodeInfo || { index: -1, name: "", world: world },
+      node: nodeInfo || { index: -1, name: "", path: [], world: world },
+      // A mirrored node (negative determinant) reverses triangle winding in world space.
+      mirrored: (world[0] * (world[5] * world[10] - world[9] * world[6]) - world[4] * (world[1] * world[10] - world[9] * world[2]) + world[8] * (world[1] * world[6] - world[5] * world[2])) < 0,
       cpu: {
         positions: bakedPositions,
         indices: indexArray,
@@ -871,6 +913,38 @@
   function readAccessor(parsed, accessor) {
     if (!accessor) return null;
     var bufferView = parsed.bufferViews[accessor.bufferView];
+    if (accessor.sparse) {
+      // glTF shape-key deltas commonly omit a base bufferView and store only
+      // changed vertices. Decode the dense base (or zeroes), then apply patches.
+      var SparseType = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array }[accessor.componentType];
+      var width = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }[accessor.type] || 1;
+      if (SparseType === undefined) return null;
+      var baseAccessor = Object.assign({}, accessor);
+      delete baseAccessor.sparse;
+      var baseValues = bufferView ? readAccessor(parsed, baseAccessor) : null;
+      var dense = baseValues ? new SparseType(baseValues) : new SparseType(accessor.count * width);
+      var patchIndices = readAccessor(parsed, {
+        bufferView: accessor.sparse.indices.bufferView,
+        byteOffset: accessor.sparse.indices.byteOffset || 0,
+        componentType: accessor.sparse.indices.componentType,
+        count: accessor.sparse.count,
+        type: "SCALAR",
+      });
+      var patchValues = readAccessor(parsed, {
+        bufferView: accessor.sparse.values.bufferView,
+        byteOffset: accessor.sparse.values.byteOffset || 0,
+        componentType: accessor.componentType,
+        count: accessor.sparse.count,
+        type: accessor.type,
+      });
+      if (patchIndices === null || patchValues === null) throw new Error("Invalid sparse glTF accessor");
+      for (var si = 0; si < accessor.sparse.count; si += 1) {
+        var at = patchIndices[si];
+        if (at >= accessor.count) throw new Error("Sparse glTF index is outside its accessor");
+        for (var sc = 0; sc < width; sc += 1) dense[at * width + sc] = patchValues[si * width + sc];
+      }
+      return dense;
+    }
     if (!bufferView) return null;
     var components = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }[accessor.type] || 1;
     var ArrayType = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array }[accessor.componentType];

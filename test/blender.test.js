@@ -88,7 +88,7 @@ test("a complete cache entry is returned without touching Blender", async () => 
     await writeFile(join(entry, "scene.json"), JSON.stringify({ blender: "Blender test", counts: { triangles: 2 } }));
     await writeFile(
       join(entry, "meta.json"),
-      JSON.stringify({ key, recipe: 2, blender: "Blender test", elapsedMs: 5, glbBytes: 10, createdAt: new Date().toISOString() })
+      JSON.stringify({ key, recipe: 3, blender: "Blender test", elapsedMs: 5, glbBytes: 10, createdAt: new Date().toISOString() })
     );
     const exporter = new BlendExporter(config);
     try {
