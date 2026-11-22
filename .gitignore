@@ -5,3 +5,6 @@ dev/shot-*.png
 node_modules/
 scripts/fixtures/
 scripts/shots/
+
+# regenerated on demand by `npm run fixture`
+test/fixtures/annotate-fixture.blend

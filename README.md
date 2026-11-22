@@ -43,10 +43,24 @@ Source-projection proximity is labeled `exact` (within the resolver's 2% source-
 - Textures, skeletal skinning and animation playback are not implemented. Static shape-key mixes are supported.
 - Rendering and interaction need a real WebGL-capable DSH page; automated CPU/DOM tests do not establish visual correctness in the live app.
 
+## Install
+
+DeepSeek Harness 0.2.x and Blender 3.6+ are required (tested with Blender 4.2.23 LTS on macOS).
+
+Prebuilt tarball (no build step, no npm publishing):
+
+```sh
+dsh plugin --profile <profile> add https://github.com/iimaguest/dsh-blender-annotate/releases/latest/download/dsh-blender-annotate.tgz
+```
+
+Or install the repository source (also prebuilt `lib/`): `dsh plugin --profile <profile> add github:iimaguest/dsh-blender-annotate`. A bare checkout `link:` may fail to resolve DSH-provided modules such as `@deepseek-ai/schemastery`; use the tarball for a clean install.
+
+Restart DSH when an update reports `restart-required`. The plugin is listed in the [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) catalog used by dsh-market.
+
 ## Requirements
 
-- DeepSeek Harness 0.2.x, Blender 3.6+ (tested with Blender 4.2.23 LTS on macOS).
-- Install the packed tarball through DSH's plugin manager (the runtime imports DSH-provided modules; a bare checkout link may not resolve them). Restart DSH after an update that reports `restart-required`.
+- DSH-provided Client/Host packages are peer dependencies; do not bundle or install them.
+- The `.blend` conversion runs your local Blender in the background. Nothing is uploaded.
 
 ## Development
 
@@ -54,5 +68,5 @@ Source-projection proximity is labeled `exact` (within the resolver's 2% source-
 npm run build   # dev/client-body.js + dev/viewer.js + dev/resolve.js -> lib/client.js
 npm test        # upstream tests + resolver tests against test/fixtures (real Blender export)
 npm run test:independent  # adversarial Blender-ground-truth, host, picker and UI tests
-npm run fixture # regenerate the fixture with a `blender` on PATH
+npm run fixture # regenerate glb/json fixtures (binary .blend is generated in a temp dir and not committed)
 ```

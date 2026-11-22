@@ -17,5 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "${{ matrix.node-version }}"
-      - name: Unit and adapter tests
-        run: node --test test/*.test.js
+          cache: npm
+      - run: npm ci
+      # Blender-dependent suites skip themselves when no Blender binary is present.
+      - name: Tests
+        run: node --test test/*.test.js test/independent/*.test.js test/final-qa/*.test.js
