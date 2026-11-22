@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -44,7 +44,7 @@ test("a missing scene is refused before any process starts", async () => {
   const exporter = new BlendExporter(config);
   try {
     await assert.rejects(
-      exporter.export(join(tmpdir(), "dsh-preview-blender-does-not-exist.blend")),
+      exporter.export(join(tmpdir(), "dsh-blender-annotate-does-not-exist.blend")),
       (error) => error instanceof Error && error.code === "ENOENT"
     );
   } finally {
@@ -80,14 +80,15 @@ test("a complete cache entry is returned without touching Blender", async () => 
     await writeFile(blend, "blend-bytes");
     const info = await stat(blend);
     const config = resolveConfig({ blenderPath: "C:\\definitely-missing-blender.exe", cacheDir: join(dir, "cache") });
-    const key = internals.cacheKey(blend, info.size, info.mtimeMs, true);
+    // The exporter keys on the real path (macOS tmpdir /var is a symlink to /private/var).
+    const key = internals.cacheKey(await realpath(blend), info.size, info.mtimeMs, true);
     const entry = join(config.cacheDir, key);
     await mkdir(entry, { recursive: true });
     await writeFile(join(entry, "model.glb"), "glTF\0\0\0");
     await writeFile(join(entry, "scene.json"), JSON.stringify({ blender: "Blender test", counts: { triangles: 2 } }));
     await writeFile(
       join(entry, "meta.json"),
-      JSON.stringify({ key, recipe: 1, blender: "Blender test", elapsedMs: 5, glbBytes: 10, createdAt: new Date().toISOString() })
+      JSON.stringify({ key, recipe: 2, blender: "Blender test", elapsedMs: 5, glbBytes: 10, createdAt: new Date().toISOString() })
     );
     const exporter = new BlendExporter(config);
     try {

@@ -1,12 +1,12 @@
 # Changelog
 
-## 0.1.0 — 2026-10-20
+## 0.1.0 — fork
 
-First release.
+Forked from dsh-preview-blender 0.1.1 and dsh-preview-snip 0.3.1 (both MIT, 439436269-ctrl).
 
-- Register a document-preview renderer for `.blend` files in the DSH right Sidebar: clicking a scene opens an interactive 3D viewport instead of the binary-file empty state.
-- Host half: authenticated `GET|HEAD /api/preview/blender` route that exports one GLB plus a scene JSON per file version with `blender --background`, keyed by real path, size, mtime, export recipe and the modifier setting, cached under `~/.dsh/cache/preview-blender` and pruned to `cacheEntries`.
-- Browser half: dependency-free WebGL glTF 2.0 viewer (orbit / pan / zoom / double-click reset / wireframe / auto-rotate / contact shadow / axis triad) and a scene panel with per-object triangle counts, millimetre bounding boxes, material swatches, units and export facts.
-- Configuration: `enabled`, `routePath`, `extensions`, `blenderPath`, `cacheDir`, `timeoutMs`, `maxBytes`, `applyModifiers`, `cacheEntries`.
-- Blender discovery: `DSH_BLENDER`, `BLENDER_PATH`, `PATH`, Steam libraries, `Blender Foundation` installs; a missing binary produces an actionable `BLENDER_MISSING` error instead of a blank panel.
-- Verified on Blender 5.2.2 LTS / DSH Desktop 0.2.1-rc.2 with a real scene (22,960 triangles): 27 unit/adapter tests, cold conversion 2.1 s, warm 3 ms, headless browser e2e ready state with 16% non-background canvas pixels.
+- Export tags every mesh with `_dsh_face`, `_dsh_vert`, `_dsh_src` (in memory; the .blend is never saved). Blender propagates them through modifiers and the glTF exporter writes them as `_DSH_*` vertex attributes (`export_attributes=True`).
+- Scene JSON gains `annotate`: source geometry, transforms, modifier stacks and custom properties.
+- Viewer keeps node identity and per-primitive ids, adds ray picking, highlight overlay, projection and occlusion checks.
+- New resolver (`dev/resolve.js`): object, instance, source face (Boolean faces attributed to the cutter), in-face parameters (barycentric / bilinear / mean-value), nearest edge with t, nearest vertex, UV, local/world mm, normal, `bpy` access line.
+- Annotate mode with Point / Face / Edge / Vertex / Object targets, 3D pins, comments, per-file persistence, Sketch (snip's editor) and Send to chat.
+- Test: resolver checked against a real Blender export fixture; upstream cache test fixed for macOS (`realpath` of tmpdir).

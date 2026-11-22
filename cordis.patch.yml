@@ -1,4 +1,4 @@
-# dsh-preview-blender bundle patch: one plugin row.
+# dsh-blender-annotate bundle patch: one plugin row (fork of dsh-preview-blender).
 #
 # A patch replaces the targeted row's whole `config`, so a profile that wants to
 # override one key must restate the others it cares about. Every key below also
@@ -11,17 +11,17 @@
 # cross-site page.
 
 - insert:
-    - id: preview-blender
-      name: dsh-preview-blender
+    - id: blender-annotate
+      name: dsh-blender-annotate
       config:
         enabled: true
-        routePath: /api/preview/blender
+        routePath: /api/blender-annotate
         extensions:
           - blend
         # Empty means "detect": DSH_BLENDER / BLENDER_PATH, then PATH, then the
         # usual Steam and Blender Foundation install locations.
         blenderPath: ""
-        # Empty means ~/.dsh/cache/preview-blender.
+        # Empty means ~/.dsh/cache/blender-annotate.
         cacheDir: ""
         # A cold conversion runs one Blender process; a 300 MB scene takes
         # tens of seconds, so the ceiling is generous.

@@ -8,16 +8,16 @@ import { DEFAULTS, expandHome, resolveConfig } from "../lib/config.js";
 test("defaults keep the route under /api and the suffix list normalized", () => {
   const config = resolveConfig(undefined);
   assert.equal(config.enabled, true);
-  assert.equal(config.routePath, "/api/preview/blender");
+  assert.equal(config.routePath, "/api/blender-annotate");
   assert.deepEqual(config.extensions, ["blend"]);
   assert.equal(config.applyModifiers, true);
   assert.equal(config.timeoutMs, DEFAULTS.timeoutMs);
-  assert.ok(config.cacheDir.endsWith(join(".dsh", "cache", "preview-blender")));
+  assert.ok(config.cacheDir.endsWith(join(".dsh", "cache", "blender-annotate")));
 });
 
 test("a route outside /api falls back to the fenced default", () => {
-  assert.equal(resolveConfig({ routePath: "/blend" }).routePath, "/api/preview/blender");
-  assert.equal(resolveConfig({ routePath: "media/blend" }).routePath, "/api/preview/blender");
+  assert.equal(resolveConfig({ routePath: "/blend" }).routePath, "/api/blender-annotate");
+  assert.equal(resolveConfig({ routePath: "media/blend" }).routePath, "/api/blender-annotate");
   assert.equal(resolveConfig({ routePath: "/api/custom/" }).routePath, "/api/custom");
 });
 

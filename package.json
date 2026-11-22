@@ -1,10 +1,11 @@
 {
-  "name": "dsh-preview-blender",
-  "version": "0.1.1",
-  "description": "Preview Blender .blend files inside DeepSeek Harness: the Host half exports a cached GLB with Blender headless and the right-Sidebar document preview draws it in an interactive WebGL viewport with scene statistics.",
+  "name": "dsh-blender-annotate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Preview and annotate Blender .blend files in DeepSeek Harness: click any point to get its object, instance, source face, nearest edge and vertex, in-face parameters, UV and coordinates, add a comment, sketch on the view, and send it all to the chat.",
   "type": "module",
   "license": "MIT",
-  "author": "439436269-ctrl",
+  "author": "iimaguest (fork of dsh-preview-blender and dsh-preview-snip by 439436269-ctrl)",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -12,24 +13,24 @@
     "blender",
     "blend",
     "gltf",
-    "glb",
-    "preview",
+    "annotation",
     "3d"
   ],
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/**/*.js",
     "lib/**/*.py",
+    "locale/*.json",
+    "icon.svg",
     "cordis.patch.yml",
     "README.md",
-    "README.zh.md",
-    "CHANGELOG.md",
-    "VERIFY.md",
     "LICENSE"
   ],
   "engines": {
@@ -45,36 +46,19 @@
     "client": {
       "platform": "web",
       "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-sidebar-documentpreview",
         "@deepseek-ai/dsh-client-ui-sidebar-right",
         "@deepseek-ai/dsh-api-workspace-files",
         "@deepseek-ai/dsh-client-resources"
       ]
-    },
-    "compatibility": {
-      "dshReleases": {
-        "0.2.0-rc.2": "compatible",
-        "0.2.1-rc.2": "compatible",
-        "0.2.2-rc.1": "compatible"
-      }
     }
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/439436269-ctrl/dsh-preview-blender.git"
-  },
-  "homepage": "https://github.com/439436269-ctrl/dsh-preview-blender#readme",
-  "bugs": {
-    "url": "https://github.com/439436269-ctrl/dsh-preview-blender/issues"
   },
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "test": "node --test test/*.test.js",
-    "selftest": "node scripts/live-selftest.mjs",
-    "e2e": "node scripts/e2e-browser.mjs"
+    "fixture": "blender -b --factory-startup --python test/fixtures/make_fixture.py -- test/fixtures/annotate-fixture.blend && blender -b --disable-autoexec test/fixtures/annotate-fixture.blend --python lib/scene.py -- test/fixtures/annotate-fixture.glb test/fixtures/annotate-fixture.json 1"
   }
 }

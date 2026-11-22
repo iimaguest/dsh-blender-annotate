@@ -16,9 +16,9 @@ const PACKAGE_ROOT = new URL("..", import.meta.url);
  * @returns the module namespace and the temp root.
  */
 async function mountHostEntry() {
-  const root = await mkdtemp(join(tmpdir(), "preview-blender-adapter-"));
+  const root = await mkdtemp(join(tmpdir(), "blender-annotate-adapter-"));
   await cp(new URL("lib", PACKAGE_ROOT), join(root, "lib"), { recursive: true });
-  await writeFile(join(root, "package.json"), JSON.stringify({ name: "dsh-preview-blender", type: "module" }));
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "dsh-blender-annotate", type: "module" }));
   const schemasteryDir = join(root, "node_modules", "@deepseek-ai", "schemastery");
   await mkdir(schemasteryDir, { recursive: true });
   await writeFile(
@@ -46,7 +46,7 @@ async function mountHostEntry() {
 test("the host entry exposes name, inject and Config", async () => {
   const { module, root } = await mountHostEntry();
   try {
-    assert.equal(module.name, "preview-blender");
+    assert.equal(module.name, "blender-annotate");
     assert.deepEqual(module.inject, ["connection"]);
     assert.ok(module.Config !== undefined, "the schema is exported for the loader");
     assert.equal(typeof module.apply, "function");
@@ -85,13 +85,13 @@ test("apply registers the route, publishes the path, and disposes both effects",
     assert.equal(route.path, "/api/custom-blend");
     assert.deepEqual(route.methods, ["GET", "HEAD"]);
     assert.equal(route.requestBody, "buffered");
-    assert.ok(disposers.includes("preview-blender: conversion route"));
-    assert.ok(disposers.includes("preview-blender: blender processes"));
+    assert.ok(disposers.includes("blender-annotate: conversion route"));
+    assert.ok(disposers.includes("blender-annotate: blender processes"));
 
     for (const handler of handlers) handler(injected);
     assert.equal(injected.length, 1);
     assert.equal(injected[0].kind, "global");
-    assert.equal(injected[0].name, "__DSH_PREVIEW_BLENDER_CONFIG__");
+    assert.equal(injected[0].name, "__DSH_BLENDER_ANNOTATE_CONFIG__");
     assert.deepEqual(injected[0].value, { routePath: "/api/custom-blend", extensions: ["blend"] });
   } finally {
     await rm(root, { recursive: true, force: true });

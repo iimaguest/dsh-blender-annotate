@@ -1,5 +1,5 @@
 /**
- * Build `lib/client.js` from the two development sources.
+ * Build `lib/client.js` from the three development sources (UI, renderer, point resolver).
  *
  * The DSH client bundle must be one self-contained CJS factory file: the module
  * loader hands it a `require` limited to the platform seed table, so the
@@ -16,6 +16,11 @@ import { dirname, join } from "node:path";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const viewerSource = await readFile(join(root, "dev", "viewer.js"), "utf8");
 const clientSource = await readFile(join(root, "dev", "client-body.js"), "utf8");
+const resolveSource = await readFile(join(root, "dev", "resolve.js"), "utf8");
+const rStart = resolveSource.indexOf("/* @resolve:start");
+const rEnd = resolveSource.indexOf("/* @resolve:end");
+if (rStart === -1 || rEnd === -1 || rEnd <= rStart) throw new Error("dev/resolve.js is missing its @resolve markers");
+const resolveBlock = resolveSource.slice(resolveSource.indexOf("\n", rStart) + 1, rEnd).trimEnd();
 
 const start = viewerSource.indexOf("/* @viewer:start");
 const end = viewerSource.indexOf("/* @viewer:end");
@@ -25,7 +30,11 @@ const viewerBlock = viewerSource.slice(viewerSource.indexOf("\n", start) + 1, en
 const marker = "/* @viewer */";
 const at = clientSource.indexOf(marker);
 if (at === -1) throw new Error("dev/client-body.js is missing the /* @viewer */ marker");
-const output = clientSource.slice(0, at) + viewerBlock + clientSource.slice(at + marker.length);
+let output = clientSource.slice(0, at) + viewerBlock + clientSource.slice(at + marker.length);
+const resolveMarker = "/* @resolve */";
+const rAt = output.indexOf(resolveMarker);
+if (rAt === -1) throw new Error("dev/client-body.js is missing the /* @resolve */ marker");
+output = output.slice(0, rAt) + resolveBlock + output.slice(rAt + resolveMarker.length);
 
 const target = join(root, "lib", "client.js");
 await writeFile(target, output, "utf8");

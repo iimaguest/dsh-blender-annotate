@@ -1,5 +1,5 @@
 /**
- * Headless end-to-end check for dsh-preview-blender against a locally started
+ * Headless end-to-end check for dsh-blender-annotate against a locally started
  * DSH web host: open the app, open a session, reveal the right Sidebar's
  * workspace files, open one .blend, and prove the WebGL preview mounted,
  * rendered non-background pixels, and can toggle its controls.
@@ -128,7 +128,7 @@ if ((await fileRow.count()) > 0) {
 }
 
 // The first open converts with Blender; give it room.
-const root = page.locator("[data-preview-blender]").first();
+const root = page.locator("[data-blender-annotate]").first();
 await root.waitFor({ state: "attached", timeout: 20000 }).catch(() => {});
 for (let attempt = 0; attempt < 60; attempt += 1) {
   const state = await root.getAttribute("data-blend-state").catch(() => null);

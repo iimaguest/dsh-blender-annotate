@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Blender annotate",
+    "description": "Opens .blend files in the right-sidebar preview (exported headlessly by your local Blender) and lets you annotate them precisely. Turn on Annotate and click any point: it resolves to the object, instance, source face (also through Bevel, Subsurf, Mirror, Array, Solidify and Boolean), nearest edge and vertex, in-face parameters, UV, and local/world coordinates in mm. Choose Point, Face, Edge, Vertex or Object, add a comment, and pins stay attached to the model as you orbit. Sketch draws boxes, circles, arrows and text over the view; Send to chat writes every annotation plus a pinned snapshot into the composer. Annotations are kept per file. Limits: edge and vertex snapping uses the pre-modifier mesh; surfaces moved by modifiers report parameters projected onto the source face; textures, skinning and animation are not shown."
+  }
+}

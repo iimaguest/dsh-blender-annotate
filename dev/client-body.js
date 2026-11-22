@@ -1,12 +1,17 @@
 /**
- * Client bundle source for dsh-preview-blender.
+ * Client bundle source for dsh-blender-annotate.
  *
- * scripts/build-client.mjs replaces the viewer marker below with the renderer
- * from dev/viewer.js and writes lib/client.js. Edit this file for the UI and
- * dev/viewer.js for the renderer, then run `node scripts/build-client.mjs`.
+ * Fork of dsh-preview-blender (MIT, 439436269-ctrl) with the annotation editor
+ * of dsh-preview-snip (MIT, 439436269-ctrl). Adds point/face/edge/vertex/object
+ * annotation on the 3D preview: every picked point is resolved to Blender
+ * identities and parameters (dev/resolve.js) and can be sent to the composer.
+ *
+ * scripts/build-client.mjs replaces the viewer and resolver markers below with
+ * dev/viewer.js and dev/resolve.js and writes lib/client.js. Edit the dev files,
+ * then run `node scripts/build-client.mjs`.
  */
 window.__ModuleLoader__.load({
-  id: "dsh-preview-blender",
+  id: "dsh-blender-annotate",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -16,12 +21,14 @@ window.__ModuleLoader__.load({
 
     /* @viewer */
 
+    /* @resolve */
+
     /** This package's copy namespace. */
-    const NS = "previewBlender";
+    const NS = "blenderAnnotate";
     /** Renderer identity: the registry definition id and the body slot key. */
-    const BODY_ID = "dsh-preview-blender/scene";
+    const BODY_ID = "dsh-blender-annotate/scene";
     /** Route that converts and serves the scene; the Host half owns the same default. */
-    const DEFAULT_ROUTE_PATH = "/api/preview/blender";
+    const DEFAULT_ROUTE_PATH = "/api/blender-annotate";
     /** Suffixes mirrored from the Host defaults. */
     const DEFAULT_EXTENSIONS = ["blend"];
 
@@ -55,6 +62,42 @@ window.__ModuleLoader__.load({
       webglMissing: "这个浏览器/显卡组合不支持 WebGL，无法绘制 3D 预览。",
       readFailed: "无法读取这个文件。",
       unsupported: "这个文件无法被 Blender 打开，或者不是有效的 .blend。",
+      annotate: "标注",
+      annotations: "标注",
+      sketch: "草图",
+      send: "发送到对话",
+      targetPoint: "点",
+      targetFace: "面",
+      targetEdge: "边",
+      targetVertex: "顶点",
+      targetObject: "对象",
+      annotateHint: "点击模型放置标注 · 拖动仍可旋转",
+      commentPlaceholder: "写下对这个位置的意见…",
+      save: "保存",
+      cancel: "取消",
+      goTo: "定位",
+      remove: "删除",
+      details: "详细参数",
+      noAnnotations: "还没有标注。打开「标注」后点击模型。",
+      noHit: "没有点中模型表面",
+      sent: "已把标注写入输入框",
+      sketchAdded: "已把草图插入输入框",
+      sendFailed: "无法写入输入框",
+      stale: "文件已变更",
+      precisionExact: "精确",
+      precisionModified: "修改器改变了表面",
+      precisionCopy: "修改器生成的副本",
+      precisionObject: "仅对象",
+      box: "方框",
+      ellipse: "圆形",
+      arrow: "箭头",
+      text: "文字",
+      undo: "撤销",
+      clear: "清空",
+      insert: "插入输入框",
+      textPrompt: "输入要标注的文字",
+      editor: "标注后插入",
+      messageTitle: "3D 标注",
     };
 
     const en = {
@@ -87,55 +130,127 @@ window.__ModuleLoader__.load({
       webglMissing: "This browser/GPU combination does not support WebGL, so the 3D preview cannot be drawn.",
       readFailed: "This file could not be read.",
       unsupported: "Blender could not open this file, or it is not a valid .blend.",
+      annotate: "Annotate",
+      annotations: "Annotations",
+      sketch: "Sketch",
+      send: "Send to chat",
+      targetPoint: "Point",
+      targetFace: "Face",
+      targetEdge: "Edge",
+      targetVertex: "Vertex",
+      targetObject: "Object",
+      annotateHint: "Click the model to annotate · drag still orbits",
+      commentPlaceholder: "What should change here?",
+      save: "Save",
+      cancel: "Cancel",
+      goTo: "Go to",
+      remove: "Delete",
+      details: "Parameters",
+      noAnnotations: "No annotations yet. Turn on Annotate, then click the model.",
+      noHit: "That click did not land on the model",
+      sent: "Annotations added to the composer",
+      sketchAdded: "Sketch added to the composer",
+      sendFailed: "Could not write to the composer",
+      stale: "file changed",
+      precisionExact: "exact",
+      precisionModified: "surface changed by a modifier",
+      precisionCopy: "modifier-generated copy",
+      precisionObject: "object only",
+      box: "Box",
+      ellipse: "Circle",
+      arrow: "Arrow",
+      text: "Text",
+      undo: "Undo",
+      clear: "Clear",
+      insert: "Insert",
+      textPrompt: "Text to annotate",
+      editor: "Annotate the view, then insert it",
+      messageTitle: "3D annotations",
     };
 
     /** Scoped styles; every selector starts at the root attribute. */
     const STYLE = [
-      '[data-preview-blender]{display:flex;flex-direction:column;flex:auto;height:100%;min-height:0;box-sizing:border-box;color:var(--dsw-alias-label-primary,#1f2329);font-size:12px}',
-      '[data-preview-blender] .dsh-bp-toolbar{display:flex;align-items:center;gap:6px;flex:none;padding:7px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1))}',
-      '[data-preview-blender] .dsh-bp-name{font-weight:600;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '[data-preview-blender] .dsh-bp-actions{display:flex;gap:4px;margin-left:auto;flex:none}',
-      '[data-preview-blender] .dsh-bp-button{appearance:none;border:0;border-radius:7px;padding:5px 8px;font:inherit;font-size:11px;line-height:1.2;cursor:pointer;color:var(--dsw-alias-label-primary,#1f2329);background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));white-space:nowrap}',
-      '[data-preview-blender] .dsh-bp-button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.12))}',
-      '[data-preview-blender] .dsh-bp-button[data-active="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(64,128,255,.18));color:var(--dsw-alias-label-accent,#2c6ef2)}',
-      '[data-preview-blender] .dsh-bp-viewport{position:relative;flex:1 1 auto;min-height:240px;min-width:0;overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#2a3446 0%,#141a24 55%,#0b0f16 100%)}',
-      '[data-preview-blender] .dsh-bp-canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none}',
-      '[data-preview-blender] .dsh-bp-canvas:active{cursor:grabbing}',
-      '[data-preview-blender] .dsh-bp-badge{position:absolute;left:10px;top:10px;padding:4px 8px;border-radius:999px;background:rgba(9,13,20,.55);color:#dfe8f6;font-size:11px;letter-spacing:.01em;pointer-events:none;backdrop-filter:blur(6px)}',
-      '[data-preview-blender] .dsh-bp-hint{position:absolute;left:10px;bottom:8px;color:rgba(223,232,246,.55);font-size:10.5px;pointer-events:none;user-select:none}',
-      '[data-preview-blender] .dsh-bp-overlay{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:rgba(8,11,17,.72);backdrop-filter:blur(3px)}',
-      '[data-preview-blender] .dsh-bp-card{width:min(420px,100%);color:#e8edf5;text-align:center;display:flex;flex-direction:column;gap:10px;align-items:center}',
-      '[data-preview-blender] .dsh-bp-card[data-tone="error"]{text-align:left;align-items:stretch}',
-      '[data-preview-blender] .dsh-bp-title{margin:0;font-size:13px;font-weight:600}',
-      '[data-preview-blender] .dsh-bp-text{margin:0;font-size:11.5px;line-height:1.55;color:rgba(232,237,245,.72)}',
-      '[data-preview-blender] .dsh-bp-code{margin:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;color:#ffb4b4}',
-      '[data-preview-blender] .dsh-bp-spinner{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:#7fa8ff;animation:dsh-bp-spin .8s linear infinite}',
+      '[data-blender-annotate]{display:flex;flex-direction:column;flex:auto;height:100%;min-height:0;box-sizing:border-box;color:var(--dsw-alias-label-primary,#1f2329);font-size:12px}',
+      '[data-blender-annotate] .dsh-bp-toolbar{display:flex;align-items:center;gap:6px;flex:none;padding:7px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1))}',
+      '[data-blender-annotate] .dsh-bp-name{font-weight:600;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '[data-blender-annotate] .dsh-bp-actions{display:flex;gap:4px;margin-left:auto;flex:none}',
+      '[data-blender-annotate] .dsh-bp-button{appearance:none;border:0;border-radius:7px;padding:5px 8px;font:inherit;font-size:11px;line-height:1.2;cursor:pointer;color:var(--dsw-alias-label-primary,#1f2329);background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));white-space:nowrap}',
+      '[data-blender-annotate] .dsh-bp-button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.12))}',
+      '[data-blender-annotate] .dsh-bp-button[data-active="true"]{background:var(--dsw-alias-interactive-bg-selected,rgba(64,128,255,.18));color:var(--dsw-alias-label-accent,#2c6ef2)}',
+      '[data-blender-annotate] .dsh-bp-viewport{position:relative;flex:1 1 auto;min-height:240px;min-width:0;overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#2a3446 0%,#141a24 55%,#0b0f16 100%)}',
+      '[data-blender-annotate] .dsh-bp-canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none}',
+      '[data-blender-annotate] .dsh-bp-canvas:active{cursor:grabbing}',
+      '[data-blender-annotate] .dsh-bp-badge{position:absolute;left:10px;top:10px;padding:4px 8px;border-radius:999px;background:rgba(9,13,20,.55);color:#dfe8f6;font-size:11px;letter-spacing:.01em;pointer-events:none;backdrop-filter:blur(6px)}',
+      '[data-blender-annotate] .dsh-bp-hint{position:absolute;left:10px;bottom:8px;color:rgba(223,232,246,.55);font-size:10.5px;pointer-events:none;user-select:none}',
+      '[data-blender-annotate] .dsh-bp-overlay{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:rgba(8,11,17,.72);backdrop-filter:blur(3px)}',
+      '[data-blender-annotate] .dsh-bp-card{width:min(420px,100%);color:#e8edf5;text-align:center;display:flex;flex-direction:column;gap:10px;align-items:center}',
+      '[data-blender-annotate] .dsh-bp-card[data-tone="error"]{text-align:left;align-items:stretch}',
+      '[data-blender-annotate] .dsh-bp-title{margin:0;font-size:13px;font-weight:600}',
+      '[data-blender-annotate] .dsh-bp-text{margin:0;font-size:11.5px;line-height:1.55;color:rgba(232,237,245,.72)}',
+      '[data-blender-annotate] .dsh-bp-code{margin:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;color:#ffb4b4}',
+      '[data-blender-annotate] .dsh-bp-spinner{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:#7fa8ff;animation:dsh-bp-spin .8s linear infinite}',
       '@keyframes dsh-bp-spin{to{transform:rotate(360deg)}}',
-      '[data-preview-blender] .dsh-bp-panel{flex:none;max-height:40%;overflow:auto;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.02))}',
-      '[data-preview-blender] .dsh-bp-panel[data-open="false"]{display:none}',
-      '[data-preview-blender] .dsh-bp-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;margin-bottom:8px}',
-      '[data-preview-blender] .dsh-bp-kv{display:flex;justify-content:space-between;gap:8px;min-width:0}',
-      '[data-preview-blender] .dsh-bp-kv span:first-child{opacity:.6}',
-      '[data-preview-blender] .dsh-bp-kv span:last-child{font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}',
-      '[data-preview-blender] .dsh-bp-table{width:100%;border-collapse:collapse;font-size:11.5px}',
-      '[data-preview-blender] .dsh-bp-table th{text-align:left;font-weight:500;opacity:.5;padding:2px 4px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.08))}',
-      '[data-preview-blender] .dsh-bp-table td{padding:3px 4px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.05));vertical-align:top}',
-      '[data-preview-blender] .dsh-bp-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}',
-      '[data-preview-blender] .dsh-bp-swatch{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:-1px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}',
-      '[data-preview-blender] .dsh-bp-materials{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}',
-      '[data-preview-blender] .dsh-bp-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.05));font-size:10.5px}',
-      '[data-preview-blender] .dsh-bp-footer{margin-top:8px;font-size:10.5px;opacity:.55;display:flex;flex-wrap:wrap;gap:4px 10px}',
-      '[data-preview-blender] .dsh-bp-details{margin-top:4px;font-size:10.5px;color:rgba(232,237,245,.7)}',
-      '[data-preview-blender] .dsh-bp-details pre{max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.25);padding:8px;border-radius:8px;margin:6px 0 0;font-size:10.5px}',
+      '[data-blender-annotate] .dsh-bp-panel{flex:none;max-height:40%;overflow:auto;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.02))}',
+      '[data-blender-annotate] .dsh-bp-panel[data-open="false"]{display:none}',
+      '[data-blender-annotate] .dsh-bp-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;margin-bottom:8px}',
+      '[data-blender-annotate] .dsh-bp-kv{display:flex;justify-content:space-between;gap:8px;min-width:0}',
+      '[data-blender-annotate] .dsh-bp-kv span:first-child{opacity:.6}',
+      '[data-blender-annotate] .dsh-bp-kv span:last-child{font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}',
+      '[data-blender-annotate] .dsh-bp-table{width:100%;border-collapse:collapse;font-size:11.5px}',
+      '[data-blender-annotate] .dsh-bp-table th{text-align:left;font-weight:500;opacity:.5;padding:2px 4px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.08))}',
+      '[data-blender-annotate] .dsh-bp-table td{padding:3px 4px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.05));vertical-align:top}',
+      '[data-blender-annotate] .dsh-bp-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '[data-blender-annotate] .dsh-bp-swatch{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:-1px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}',
+      '[data-blender-annotate] .dsh-bp-materials{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}',
+      '[data-blender-annotate] .dsh-bp-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.05));font-size:10.5px}',
+      '[data-blender-annotate] .dsh-bp-footer{margin-top:8px;font-size:10.5px;opacity:.55;display:flex;flex-wrap:wrap;gap:4px 10px}',
+      '[data-blender-annotate] .dsh-bp-details{margin-top:4px;font-size:10.5px;color:rgba(232,237,245,.7)}',
+      '[data-blender-annotate] .dsh-bp-details pre{max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.25);padding:8px;border-radius:8px;margin:6px 0 0;font-size:10.5px}',
+      // dsh-blender-annotate
+      '[data-blender-annotate] .dsh-bp-toolbar{flex-wrap:wrap}',
+      '[data-blender-annotate] .dsh-bp-actions{flex-wrap:wrap;justify-content:flex-end}',
+      '[data-blender-annotate] .dsh-ba-targets{display:flex;flex-wrap:wrap;gap:2px;flex:1 0 100%;padding-top:4px}',
+      '[data-blender-annotate] .dsh-ba-targets .dsh-bp-button{padding:3px 8px}',
+      '[data-blender-annotate] .dsh-bp-canvas[data-annotating="true"]{cursor:crosshair}',
+      '[data-blender-annotate] .dsh-ba-pins{position:absolute;inset:0;pointer-events:none;overflow:hidden}',
+      '[data-blender-annotate] .dsh-ba-pin{position:absolute;left:0;top:0;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;display:grid;place-items:center;font-size:10.5px;font-weight:700;color:#1b1300;background:#ffb020;box-shadow:0 0 0 2px #fff,0 2px 6px rgba(0,0,0,.45);pointer-events:auto;cursor:pointer;user-select:none;will-change:transform}',
+      '[data-blender-annotate] .dsh-ba-pin[data-draft="true"]{background:#4f8cff;color:#fff}',
+      '[data-blender-annotate] .dsh-ba-pin[data-occluded="true"]{opacity:.35}',
+      '[data-blender-annotate] .dsh-ba-pin[data-offscreen="true"]{display:none}',
+      '[data-blender-annotate] .dsh-ba-draft{position:absolute;left:8px;right:8px;bottom:8px;display:flex;flex-direction:column;gap:6px;padding:9px 10px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#1f2329);box-shadow:0 8px 28px rgba(0,0,0,.35);max-height:62%;overflow:auto}',
+      '[data-blender-annotate] .dsh-ba-selector{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;line-height:1.45;overflow-wrap:anywhere}',
+      '[data-blender-annotate] .dsh-ba-meta{font-size:10.5px;opacity:.65}',
+      '[data-blender-annotate] .dsh-ba-draft textarea{width:100%;box-sizing:border-box;min-height:52px;resize:vertical;border:1px solid var(--dsw-alias-border-default,rgba(0,0,0,.18));border-radius:7px;padding:6px 8px;font:inherit;font-size:12px;background:transparent;color:inherit}',
+      '[data-blender-annotate] .dsh-ba-row{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}',
+      '[data-blender-annotate] .dsh-ba-details summary{cursor:pointer;font-size:11px;opacity:.75}',
+      '[data-blender-annotate] .dsh-ba-details pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.45;opacity:.85}',
+      '[data-blender-annotate] .dsh-ba-tabs{display:flex;gap:4px;margin-bottom:8px}',
+      '[data-blender-annotate] .dsh-ba-list{display:flex;flex-direction:column;gap:6px}',
+      '[data-blender-annotate] .dsh-ba-item{display:grid;grid-template-columns:22px 1fr auto;gap:6px 8px;align-items:start;padding:6px 0;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.06))}',
+      '[data-blender-annotate] .dsh-ba-item .dsh-ba-num{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:10.5px;font-weight:700;color:#1b1300;background:#ffb020}',
+      '[data-blender-annotate] .dsh-ba-item p{margin:2px 0 0;font-size:12px;overflow-wrap:anywhere}',
+      '[data-blender-annotate] .dsh-ba-notice{position:absolute;left:50%;top:10px;transform:translateX(-50%);padding:4px 10px;border-radius:999px;background:rgba(9,13,20,.75);color:#dfe8f6;font-size:11px;pointer-events:none;white-space:nowrap}',
+      '[data-ba-editor]{position:fixed;inset:0;z-index:100001;background:rgba(8,10,14,.72);display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}',
+      '[data-ba-editor] .ba-editor-panel{display:flex;flex-direction:column;gap:10px;max-width:94vw;max-height:92vh;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#1f2329);border-radius:12px;padding:12px;box-shadow:0 18px 60px rgba(0,0,0,.35)}',
+      '[data-ba-editor] .ba-editor-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap}',
+      '[data-ba-editor] .ba-editor-toolbar button,[data-ba-editor] .ba-editor-textbar button{appearance:none;border:1px solid rgba(0,0,0,.12);border-radius:7px;padding:5px 9px;font:inherit;font-size:12px;cursor:pointer;background:transparent;color:inherit}',
+      '[data-ba-editor] .ba-editor-toolbar button[data-active=true]{background:#2c6ef2;color:#fff;border-color:#2c6ef2}',
+      '[data-ba-editor] .ba-editor-toolbar button[data-color]{width:22px;height:22px;padding:0;border-radius:999px}',
+      '[data-ba-editor] .ba-editor-toolbar button[data-color][data-active=true]{outline:2px solid #111;outline-offset:2px}',
+      '[data-ba-editor] .ba-editor-spacer{flex:1 1 auto}',
+      '[data-ba-editor] .ba-editor-textbar{display:flex;gap:6px;align-items:center}',
+      '[data-ba-editor] .ba-editor-textbar input{flex:1 1 auto;min-width:180px;border:1px solid rgba(0,0,0,.18);border-radius:7px;padding:6px 8px;font:inherit;font-size:12px;background:transparent;color:inherit}',
+      '[data-ba-editor] canvas{display:block;max-width:90vw;max-height:72vh;width:auto;height:auto;background:#fff;border-radius:8px;cursor:crosshair;touch-action:none}',
+      '[data-ba-editor] .ba-editor-hint{font-size:11px;opacity:.55}',
     ].join("\n");
 
     /** Install the scoped stylesheet once per document. */
     function installStyle() {
       if (typeof document === "undefined") return;
-      const tagId = "dsh-preview-blender/client.css";
+      const tagId = "dsh-blender-annotate/client.css";
       if (document.querySelector('style[data-plugin-css="' + tagId + '"]') !== null) return;
       const tag = document.createElement("style");
-      tag.dataset.plugin = "dsh-preview-blender";
+      tag.dataset.plugin = "dsh-blender-annotate";
       tag.dataset.pluginCss = tagId;
       tag.textContent = STYLE;
       document.head.appendChild(tag);
@@ -186,7 +301,7 @@ window.__ModuleLoader__.load({
 
     /** The route the Host half actually registered, as injected at boot. */
     function configuredConfig() {
-      const config = globalThis.__DSH_PREVIEW_BLENDER_CONFIG__;
+      const config = globalThis.__DSH_BLENDER_ANNOTATE_CONFIG__;
       const routePath =
         typeof config === "object" && config !== null && typeof config.routePath === "string" && config.routePath !== ""
           ? config.routePath
@@ -221,6 +336,288 @@ window.__ModuleLoader__.load({
       return "#8a94a6";
     }
 
+    // ------------------------------------------------------------ annotations
+    const TARGETS = ["point", "face", "edge", "vertex", "object"];
+    const TARGET_LABEL = { point: "targetPoint", face: "targetFace", edge: "targetEdge", vertex: "targetVertex", object: "targetObject" };
+    const PRECISION_LABEL = { exact: "precisionExact", "modified-surface": "precisionModified", "modifier-copy": "precisionCopy", object: "precisionObject", face: "precisionObject" };
+    const SKETCH_COLORS = ["#e11d48", "#f59e0b", "#2563eb", "#16a34a"];
+    const STORE_PREFIX = "dsh-blender-annotate:v1:";
+
+    function loadAnnotations(path) {
+      try {
+        const raw = window.localStorage.getItem(STORE_PREFIX + path);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return parsed && Array.isArray(parsed.items) ? parsed : { version: null, items: [] };
+      } catch {
+        return { version: null, items: [] };
+      }
+    }
+    function storeAnnotations(path, version, items) {
+      try {
+        if (items.length === 0) window.localStorage.removeItem(STORE_PREFIX + path);
+        else window.localStorage.setItem(STORE_PREFIX + path, JSON.stringify({ version, items }));
+      } catch {
+        // Storage full or blocked: annotations stay in memory for this view.
+      }
+    }
+
+    /** Overlay geometry (glTF world) emphasising an annotation's target. */
+    function overlayFor(viewer, item) {
+      if (viewer === null || !item || !item.hit) return null;
+      const r = item.resolved;
+      const hit = item.hit;
+      const outline = (points) => {
+        const lines = [];
+        for (let i = 0; i < points.length; i += 1) lines.push(...points[i], ...points[(i + 1) % points.length]);
+        return lines;
+      };
+      if (item.target === "object") return { faces: viewer.trianglesOf(hit.nodeIndex, 0, null) };
+      const faces = r && r.face !== null ? viewer.trianglesOf(hit.nodeIndex, hit.srcId, hit.faceId) : null;
+      if (item.target === "face") return { faces, lines: r && r.snap ? outline(r.snap.faceOutline) : null };
+      if (item.target === "edge" && r && r.snap) {
+        return { faces, faceColor: [1, 0.72, 0.18, 0.14], lines: [...r.snap.edgeEnds[0], ...r.snap.edgeEnds[1]], lineColor: [1, 0.3, 0.3, 1] };
+      }
+      if (item.target === "vertex" && r && r.snap) {
+        const p = r.snap.vertexPoint;
+        const edge = r.snap.faceOutline;
+        let size = 0.02;
+        if (edge && edge.length > 1) size = Math.hypot(edge[0][0] - edge[1][0], edge[0][1] - edge[1][1], edge[0][2] - edge[1][2]) * 0.12;
+        const lines = [];
+        for (let a = 0; a < 3; a += 1) {
+          const lo = p.slice(), hi = p.slice();
+          lo[a] -= size; hi[a] += size;
+          lines.push(...lo, ...hi);
+        }
+        return { faces, faceColor: [1, 0.72, 0.18, 0.14], lines, lineColor: [1, 0.3, 0.3, 1] };
+      }
+      return { faces, faceColor: [1, 0.72, 0.18, 0.22] };
+    }
+
+    /** The current 3D view with numbered pins burnt in, as a 2D canvas. */
+    function snapshotWithPins(viewer, items) {
+      const source = viewer.canvas;
+      const out = document.createElement("canvas");
+      out.width = source.width;
+      out.height = source.height;
+      const context = out.getContext("2d");
+      if (context === null) throw new Error("canvas");
+      const background = context.createLinearGradient(0, 0, 0, out.height);
+      background.addColorStop(0, "#2a3446");
+      background.addColorStop(1, "#0b0f16");
+      context.fillStyle = background;
+      context.fillRect(0, 0, out.width, out.height);
+      context.drawImage(source, 0, 0);
+      const rect = source.getBoundingClientRect();
+      const scale = out.width / Math.max(rect.width, 1);
+      const radius = 11 * scale;
+      items.forEach((item, index) => {
+        const at = viewer.project(item.anchor);
+        if (!at.visible) return;
+        const x = at.x * scale, y = at.y * scale;
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fillStyle = "#ffb020";
+        context.fill();
+        context.lineWidth = 2 * scale;
+        context.strokeStyle = "#ffffff";
+        context.stroke();
+        context.fillStyle = "#1b1300";
+        context.font = `700 ${Math.round(11 * scale)}px sans-serif`;
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(String(index + 1), x, y + 0.5);
+      });
+      return out;
+    }
+
+    function canvasToFile(canvas, stem) {
+      return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob === null) reject(new Error("encode"));
+          else resolve(new File([blob], `${stem}-${Date.now()}.png`, { type: "image/png" }));
+        }, "image/png");
+      });
+    }
+
+    /** Markdown the agent receives: one block per annotation, numbered like the pins. */
+    function buildMessage(t, fileName, filePath, items) {
+      const lines = [`### ${t("messageTitle")} — \`${fileName}\``, `File: \`${filePath}\``, ""];
+      items.forEach((item, index) => {
+        lines.push(`**${index + 1}. ${item.comment.trim() || "(no comment)"}**`);
+        lines.push(item.resolved ? describeResolved(item.resolved, item.target) : `- target: ${item.target}`);
+        if (item.stale) lines.push("- note: recorded on an earlier version of this file");
+        lines.push("");
+      });
+      return lines.join("\n");
+    }
+
+    function drawSketchShape(context, shape, lineWidth, font) {
+      context.save();
+      context.strokeStyle = shape.color;
+      context.fillStyle = shape.color;
+      context.lineWidth = lineWidth;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      const x = Math.min(shape.x1, shape.x2);
+      const y = Math.min(shape.y1, shape.y2);
+      const w = Math.abs(shape.x2 - shape.x1);
+      const h = Math.abs(shape.y2 - shape.y1);
+      if (shape.type === "rect") {
+        context.strokeRect(x, y, w, h);
+      } else if (shape.type === "ellipse") {
+        context.beginPath();
+        context.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+        context.stroke();
+      } else if (shape.type === "arrow") {
+        context.beginPath();
+        context.moveTo(shape.x1, shape.y1);
+        context.lineTo(shape.x2, shape.y2);
+        context.stroke();
+        const angle = Math.atan2(shape.y2 - shape.y1, shape.x2 - shape.x1);
+        const head = Math.max(10, lineWidth * 3);
+        context.beginPath();
+        context.moveTo(shape.x2, shape.y2);
+        context.lineTo(shape.x2 - head * Math.cos(angle - 0.5), shape.y2 - head * Math.sin(angle - 0.5));
+        context.moveTo(shape.x2, shape.y2);
+        context.lineTo(shape.x2 - head * Math.cos(angle + 0.5), shape.y2 - head * Math.sin(angle + 0.5));
+        context.stroke();
+      } else if (shape.type === "text") {
+        context.font = `600 ${font}px sans-serif`;
+        context.textBaseline = "top";
+        context.fillText(shape.text, shape.x1, shape.y1);
+      }
+      context.restore();
+    }
+
+    /** Free-form markup over the captured view (adapted from dsh-preview-snip's SnipEditor, MIT). */
+    function SketchEditor({ src, width, height, t, onCancel, onCommit }) {
+      const canvasRef = React.useRef(null);
+      const imageRef = React.useRef(null);
+      const startRef = React.useRef(null);
+      const [tool, setTool] = React.useState("ellipse");
+      const [color, setColor] = React.useState(SKETCH_COLORS[0]);
+      const [shapes, setShapes] = React.useState([]);
+      const [draft, setDraft] = React.useState(null);
+      const [textAt, setTextAt] = React.useState(null);
+      const [textValue, setTextValue] = React.useState("");
+      const [busy, setBusy] = React.useState(false);
+
+      const redraw = React.useCallback(() => {
+        const canvas = canvasRef.current;
+        const image = imageRef.current;
+        if (canvas === null || image === null) return;
+        const context = canvas.getContext("2d");
+        if (context === null) return;
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const lineWidth = Math.max(4, canvas.width / 260);
+        const font = Math.max(22, canvas.width / 28);
+        for (const shape of shapes) drawSketchShape(context, shape, lineWidth, font);
+        if (draft !== null) drawSketchShape(context, draft, lineWidth, font);
+      }, [shapes, draft]);
+
+      React.useEffect(() => {
+        const image = new Image();
+        image.onload = () => {
+          imageRef.current = image;
+          const canvas = canvasRef.current;
+          if (canvas !== null) {
+            canvas.width = width;
+            canvas.height = height;
+            redraw();
+          }
+        };
+        image.src = src;
+      }, [src, width, height, redraw]);
+      React.useEffect(() => { redraw(); }, [redraw]);
+
+      const pointOf = (event) => {
+        const canvas = canvasRef.current;
+        if (canvas === null) return { x: 0, y: 0 };
+        const rect = canvas.getBoundingClientRect();
+        return { x: ((event.clientX - rect.left) / rect.width) * canvas.width, y: ((event.clientY - rect.top) / rect.height) * canvas.height };
+      };
+      const onPointerDown = (event) => {
+        event.preventDefault();
+        const point = pointOf(event);
+        if (tool === "text") { setTextAt(point); setTextValue(""); return; }
+        startRef.current = point;
+        setDraft({ type: tool, x1: point.x, y1: point.y, x2: point.x, y2: point.y, color });
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      };
+      const onPointerMove = (event) => {
+        if (startRef.current === null) return;
+        const point = pointOf(event);
+        setDraft((previous) => (previous === null ? null : { ...previous, x2: point.x, y2: point.y }));
+      };
+      const onPointerUp = () => {
+        if (startRef.current === null) return;
+        startRef.current = null;
+        setDraft((previous) => {
+          if (previous !== null && Math.abs(previous.x2 - previous.x1) > 2 && Math.abs(previous.y2 - previous.y1) > 2) {
+            setShapes((now) => [...now, previous]);
+          }
+          return null;
+        });
+      };
+      const addText = () => {
+        if (textAt === null || textValue.trim() === "") return;
+        setShapes((previous) => [...previous, { type: "text", x1: textAt.x, y1: textAt.y, x2: textAt.x, y2: textAt.y, text: textValue, color }]);
+        setTextAt(null);
+        setTextValue("");
+      };
+      const insert = async () => {
+        const canvas = canvasRef.current;
+        if (canvas === null) return;
+        setBusy(true);
+        try { await onCommit(await canvasToFile(canvas, "blender-sketch")); } finally { setBusy(false); }
+      };
+      const toolButton = (id, label) =>
+        React.createElement("button", { type: "button", key: id, "data-active": tool === id, onClick: () => setTool(id) }, t(label));
+
+      return React.createElement(
+        "div",
+        { "data-ba-editor": true },
+        React.createElement(
+          "div",
+          { className: "ba-editor-panel" },
+          React.createElement(
+            "div",
+            { className: "ba-editor-toolbar" },
+            toolButton("rect", "box"),
+            toolButton("ellipse", "ellipse"),
+            toolButton("arrow", "arrow"),
+            toolButton("text", "text"),
+            ...SKETCH_COLORS.map((value) =>
+              React.createElement("button", { key: value, type: "button", "data-color": true, "data-active": color === value, title: value, style: { background: value }, onClick: () => setColor(value) })
+            ),
+            React.createElement("span", { className: "ba-editor-spacer" }),
+            React.createElement("button", { type: "button", onClick: () => setShapes((previous) => previous.slice(0, -1)) }, t("undo")),
+            React.createElement("button", { type: "button", onClick: () => setShapes([]) }, t("clear")),
+            React.createElement("button", { type: "button", onClick: onCancel }, t("cancel")),
+            React.createElement("button", { type: "button", disabled: busy, onClick: () => void insert() }, busy ? "…" : t("insert"))
+          ),
+          textAt === null
+            ? null
+            : React.createElement(
+                "div",
+                { className: "ba-editor-textbar" },
+                React.createElement("input", {
+                  autoFocus: true,
+                  value: textValue,
+                  placeholder: t("textPrompt"),
+                  onChange: (event) => setTextValue(event.target.value),
+                  onKeyDown: (event) => { if (event.key === "Enter") addText(); if (event.key === "Escape") setTextAt(null); },
+                }),
+                React.createElement("button", { type: "button", onClick: addText }, t("insert")),
+                React.createElement("button", { type: "button", onClick: () => setTextAt(null) }, t("cancel"))
+              ),
+          React.createElement("canvas", { ref: canvasRef, width, height, onPointerDown, onPointerMove, onPointerUp }),
+          React.createElement("p", { className: "ba-editor-hint" }, t("editor"))
+        )
+      );
+    }
+
     /**
      * The preview body: fetch the scene JSON and the exported GLB, draw the
      * model, and show the scene facts underneath.
@@ -228,7 +625,8 @@ window.__ModuleLoader__.load({
      * @returns the preview, or its loading/error state.
      */
     function BlendBody(props) {
-      const { content, resourceAddress, useResource, t, routePath } = props;
+      const { content, resourceAddress, useResource, t, routePath, inputActions, useInput, sessionId, createDraftsFor } = props;
+      const composerDraft = typeof useInput === "function" ? useInput((input) => input.draft) : "";
       const meta = useResource(resourceAddress);
       const absolutePath = meta.value && meta.value.absolutePath ? meta.value.absolutePath : undefined;
       const version = meta.value && meta.value.version ? meta.value.version : "0";
@@ -249,6 +647,106 @@ window.__ModuleLoader__.load({
       const [wireframe, setWireframe] = React.useState(false);
       const [autoRotate, setAutoRotate] = React.useState(false);
       const reported = React.useRef(-1);
+
+      // Annotation state.
+      const [annotating, setAnnotating] = React.useState(false);
+      const [target, setTarget] = React.useState("point");
+      const [annotations, setAnnotations] = React.useState([]);
+      const [draft, setDraft] = React.useState(null);
+      const [selectedId, setSelectedId] = React.useState(null);
+      const [panelTab, setPanelTab] = React.useState("info");
+      const [notice, setNotice] = React.useState("");
+      const [sketch, setSketch] = React.useState(null);
+      const resolverRef = React.useRef(null);
+      const loadedRef = React.useRef(false);
+      const pinElements = React.useRef({});
+      const pinItemsRef = React.useRef([]);
+      const occlusionAt = React.useRef(0);
+      const clickRef = React.useRef(() => {});
+      const viewRef = React.useRef(() => {});
+      const noticeTimer = React.useRef(0);
+
+      const flash = React.useCallback((message) => {
+        setNotice(message);
+        clearTimeout(noticeTimer.current);
+        noticeTimer.current = setTimeout(() => setNotice(""), 2600);
+      }, []);
+      React.useEffect(() => () => clearTimeout(noticeTimer.current), []);
+
+      const anchorFor = (item, nextTarget) => {
+        const r = item.resolved;
+        if (nextTarget === "edge" && r && r.snap) return r.snap.edgePoint;
+        if (nextTarget === "vertex" && r && r.snap) return r.snap.vertexPoint;
+        return item.hit.point;
+      };
+
+      // Click on the model (no drag) while annotating: resolve and open a draft.
+      clickRef.current = (clientX, clientY) => {
+        const viewer = viewerRef.current;
+        if (!annotating || viewer === null || state !== "ready") return;
+        const hit = viewer.pick(clientX, clientY);
+        if (hit === null) {
+          flash(t("noHit"));
+          return;
+        }
+        const resolved = resolverRef.current !== null ? resolverRef.current.resolve(hit) : null;
+        const item = {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+          target,
+          hit: { nodeIndex: hit.nodeIndex, nodeName: hit.nodeName, srcId: hit.srcId, faceId: hit.faceId, point: hit.point, normal: hit.normal },
+          resolved,
+          view: viewer.getView(),
+          comment: "",
+          stale: false,
+        };
+        item.anchor = anchorFor(item, target);
+        setDraft(item);
+        setSelectedId(null);
+      };
+
+      const changeTarget = (next) => {
+        setTarget(next);
+        setDraft((current) => (current === null ? current : { ...current, target: next, anchor: anchorFor(current, next) }));
+      };
+
+      // Keep the pins glued to the model while orbiting (direct DOM writes, no React render per frame).
+      viewRef.current = () => {
+        const viewer = viewerRef.current;
+        if (viewer === null) return;
+        const rect = viewer.canvas.getBoundingClientRect();
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const checkOcclusion = now - occlusionAt.current > 140;
+        if (checkOcclusion) occlusionAt.current = now;
+        for (const item of pinItemsRef.current) {
+          const element = pinElements.current[item.id];
+          if (!element) continue;
+          const at = viewer.project(item.anchor);
+          const offscreen = !at.visible || at.x < -12 || at.y < -12 || at.x > rect.width + 12 || at.y > rect.height + 12;
+          element.dataset.offscreen = offscreen ? "true" : "false";
+          if (offscreen) continue;
+          element.style.transform = `translate(${at.x}px, ${at.y}px)`;
+          if (checkOcclusion) element.dataset.occluded = viewer.isUnoccluded(item.anchor) ? "false" : "true";
+        }
+      };
+      pinItemsRef.current = draft === null ? annotations : [...annotations, draft];
+      React.useLayoutEffect(() => {
+        occlusionAt.current = 0;
+        viewRef.current();
+      }, [annotations, draft]);
+
+      // Highlight the draft, or the selected saved annotation.
+      React.useEffect(() => {
+        const viewer = viewerRef.current;
+        if (viewer === null || state !== "ready") return;
+        const item = draft !== null ? draft : annotations.find((entry) => entry.id === selectedId);
+        viewer.setOverlay(item ? overlayFor(viewer, item) : null);
+      }, [draft, selectedId, annotations, state]);
+
+      // Persist per file; annotations from an older file version are kept and flagged.
+      React.useEffect(() => {
+        if (!loadedRef.current || absolutePath === undefined) return;
+        storeAnnotations(absolutePath, version, annotations);
+      }, [annotations, absolutePath, version]);
 
       const settle = React.useCallback(
         (ok, fileVersion) => {
@@ -273,7 +771,10 @@ window.__ModuleLoader__.load({
         }
         if (viewerRef.current !== null) return;
         try {
-          viewerRef.current = createViewer(node, {});
+          viewerRef.current = createViewer(node, {
+            onClick: (x, y) => clickRef.current(x, y),
+            onView: () => viewRef.current(),
+          });
           viewerErrorRef.current = "";
           setViewerError("");
         } catch (error) {
@@ -282,7 +783,7 @@ window.__ModuleLoader__.load({
           setViewerError(message);
           // The failure is shown in the overlay; the console line keeps the
           // shader/context detail reachable when the overlay is not enough.
-          console.error("[preview-blender] viewer init failed:", error);
+          console.error("[blender-annotate] viewer init failed:", error);
         }
       }, []);
 
@@ -302,6 +803,7 @@ window.__ModuleLoader__.load({
           tick += 1;
           setElapsed(tick);
         }, 1000);
+        loadedRef.current = false;
         setState("loading");
         setFailure(null);
         setPayload(null);
@@ -340,6 +842,16 @@ window.__ModuleLoader__.load({
             };
           }
           const modelStats = viewer.setModel(bytes);
+          const sceneInfo = infoBody && infoBody.scene ? infoBody.scene : null;
+          resolverRef.current = sceneInfo && sceneInfo.annotate
+            ? createResolver(sceneInfo.annotate, sceneInfo.unit ? sceneInfo.unit.millimeters_per_unit : 1000)
+            : null;
+          const stored = loadAnnotations(absolutePath);
+          const changed = stored.version !== null && stored.version !== version;
+          loadedRef.current = true;
+          setAnnotations(stored.items.map((item) => (changed ? { ...item, stale: true } : item)));
+          if (stored.items.length > 0) setPanelTab("annotations");
+          setDraft(null);
           setStats(modelStats);
           setState("ready");
           settleRef.current(true, version);
@@ -365,7 +877,7 @@ window.__ModuleLoader__.load({
         const failed = meta.status === "failed";
         return React.createElement(
           "div",
-          { "data-preview-blender": true, "data-blend-state": failed ? "failed" : "loading" },
+          { "data-blender-annotate": true, "data-blend-state": failed ? "failed" : "loading" },
           React.createElement(
             "div",
             { className: "dsh-bp-viewport" },
@@ -403,6 +915,53 @@ window.__ModuleLoader__.load({
         : [];
       const name = scene && scene.file_name ? scene.file_name : basenameOf(absolutePath);
       const triangles = stats !== null ? stats.triangles : counts !== null ? counts.triangles : 0;
+
+      const attachFiles = (files) => {
+        if (typeof createDraftsFor !== "function" || inputActions === undefined || typeof inputActions.addAttachments !== "function") return false;
+        try {
+          const ids = createDraftsFor(sessionId)(files);
+          return inputActions.addAttachments(ids) !== false;
+        } catch (error) {
+          console.warn("[blender-annotate] attachment failed:", error);
+          return false;
+        }
+      };
+
+      const saveDraft = () => {
+        if (draft === null) return;
+        const saved = { ...draft, comment: draft.comment.trim() };
+        setAnnotations((items) => [...items, saved]);
+        setDraft(null);
+        setSelectedId(saved.id);
+        setPanelTab("annotations");
+        setPanelOpen(true);
+      };
+
+      const send = async () => {
+        const viewer = viewerRef.current;
+        if (annotations.length === 0 || viewer === null) return;
+        if (inputActions === undefined || typeof inputActions.setDraft !== "function") {
+          flash(t("sendFailed"));
+          return;
+        }
+        const message = buildMessage(t, name, absolutePath, annotations);
+        const current = typeof composerDraft === "string" ? composerDraft : "";
+        inputActions.setDraft(current.trim() === "" ? message : `${current}\n\n${message}`);
+        try {
+          const file = await canvasToFile(snapshotWithPins(viewer, annotations), "blender-annotations");
+          attachFiles([file]);
+        } catch (error) {
+          console.warn("[blender-annotate] snapshot not attached:", error);
+        }
+        flash(t("sent"));
+      };
+
+      const openSketch = () => {
+        const viewer = viewerRef.current;
+        if (viewer === null) return;
+        const capture = snapshotWithPins(viewer, draft === null ? annotations : [...annotations, draft]);
+        setSketch({ src: capture.toDataURL("image/png"), width: capture.width, height: capture.height });
+      };
 
       const loading = state === "loading" || state === "exporting";
       const toolbar = React.createElement(
@@ -461,8 +1020,62 @@ window.__ModuleLoader__.load({
               onClick: () => setPanelOpen((value) => !value),
             },
             t("info")
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "dsh-bp-button",
+              "data-blend-action": "annotate",
+              "data-active": annotating ? "true" : "false",
+              "aria-pressed": annotating ? "true" : "false",
+              disabled: state !== "ready",
+              onClick: () => {
+                setAnnotating((value) => !value);
+                if (annotating) setDraft(null);
+              },
+            },
+            t("annotate")
+          ),
+          React.createElement(
+            "button",
+            { type: "button", className: "dsh-bp-button", "data-blend-action": "sketch", disabled: state !== "ready", onClick: openSketch },
+            t("sketch")
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "dsh-bp-button",
+              "data-blend-action": "send",
+              disabled: state !== "ready" || annotations.length === 0,
+              onClick: () => void send(),
+            },
+            t("send") + (annotations.length > 0 ? ` (${annotations.length})` : "")
           )
-        )
+        ),
+        annotating
+          ? React.createElement(
+              "div",
+              { className: "dsh-ba-targets", role: "radiogroup", "aria-label": t("annotate") },
+              TARGETS.map((id) =>
+                React.createElement(
+                  "button",
+                  {
+                    key: id,
+                    type: "button",
+                    role: "radio",
+                    className: "dsh-bp-button",
+                    "data-blend-target": id,
+                    "data-active": target === id ? "true" : "false",
+                    "aria-checked": target === id ? "true" : "false",
+                    onClick: () => changeTarget(id),
+                  },
+                  t(TARGET_LABEL[id])
+                )
+              )
+            )
+          : null
       );
 
       const overlay = loading
@@ -518,9 +1131,83 @@ window.__ModuleLoader__.load({
           ref: attachCanvas,
           className: "dsh-bp-canvas",
           "data-blend-canvas": true,
+          "data-annotating": annotating ? "true" : "false",
           tabIndex: 0,
           "aria-label": name,
         }),
+        React.createElement(
+          "div",
+          { className: "dsh-ba-pins", "data-blend-pins": true },
+          pinItemsRef.current.map((item) => {
+            const isDraft = draft !== null && item.id === draft.id;
+            const number = isDraft ? annotations.length + 1 : annotations.indexOf(item) + 1;
+            return React.createElement(
+              "div",
+              {
+                key: item.id,
+                ref: (element) => {
+                  if (element === null) delete pinElements.current[item.id];
+                  else pinElements.current[item.id] = element;
+                },
+                className: "dsh-ba-pin",
+                "data-draft": isDraft ? "true" : "false",
+                "data-offscreen": "true",
+                title: item.resolved ? selectorOf(item.resolved, item.target) : item.hit.nodeName,
+                onClick: () => {
+                  if (isDraft) return;
+                  setSelectedId(item.id);
+                  setPanelTab("annotations");
+                  setPanelOpen(true);
+                },
+              },
+              String(number)
+            );
+          })
+        ),
+        notice !== "" ? React.createElement("div", { className: "dsh-ba-notice", "data-blend-notice": true }, notice) : null,
+        draft !== null
+          ? React.createElement(
+              "div",
+              { className: "dsh-ba-draft", "data-blend-draft": true },
+              React.createElement(
+                "div",
+                { className: "dsh-ba-selector" },
+                `${annotations.length + 1}. ` + (draft.resolved ? selectorOf(draft.resolved, draft.target) : draft.hit.nodeName)
+              ),
+              React.createElement(
+                "div",
+                { className: "dsh-ba-meta" },
+                t(TARGET_LABEL[draft.target]) + " · " + t(PRECISION_LABEL[draft.resolved ? draft.resolved.precision : "object"] || "precisionObject")
+              ),
+              React.createElement("textarea", {
+                autoFocus: true,
+                value: draft.comment,
+                placeholder: t("commentPlaceholder"),
+                onChange: (event) => {
+                  const value = event.target.value;
+                  setDraft((current) => (current === null ? current : { ...current, comment: value }));
+                },
+                onKeyDown: (event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) saveDraft();
+                  if (event.key === "Escape") setDraft(null);
+                },
+              }),
+              draft.resolved
+                ? React.createElement(
+                    "details",
+                    { className: "dsh-ba-details" },
+                    React.createElement("summary", null, t("details")),
+                    React.createElement("pre", null, describeResolved(draft.resolved, draft.target))
+                  )
+                : null,
+              React.createElement(
+                "div",
+                { className: "dsh-ba-row" },
+                React.createElement("button", { type: "button", className: "dsh-bp-button", onClick: () => setDraft(null) }, t("cancel")),
+                React.createElement("button", { type: "button", className: "dsh-bp-button", "data-active": "true", "data-blend-action": "save-annotation", onClick: saveDraft }, t("save"))
+              )
+            )
+          : null,
         state === "ready"
           ? React.createElement(
               "div",
@@ -528,7 +1215,7 @@ window.__ModuleLoader__.load({
               formatCount(triangles) + " " + t("triangles")
             )
           : null,
-        state === "ready" ? React.createElement("div", { className: "dsh-bp-hint" }, t("hint")) : null,
+        state === "ready" && draft === null ? React.createElement("div", { className: "dsh-bp-hint" }, annotating ? t("annotateHint") : t("hint")) : null,
         overlay,
         viewerError !== "" && state !== "failed"
           ? React.createElement(
@@ -577,10 +1264,83 @@ window.__ModuleLoader__.load({
         )
       );
 
-      const panel = React.createElement(
+      const tabs = React.createElement(
         "div",
-        { className: "dsh-bp-panel", "data-blend-panel": true, "data-open": panelOpen ? "true" : "false" },
-        scene === null
+        { className: "dsh-ba-tabs", role: "tablist" },
+        React.createElement(
+          "button",
+          { type: "button", role: "tab", className: "dsh-bp-button", "data-active": panelTab === "info" ? "true" : "false", "aria-selected": panelTab === "info", onClick: () => setPanelTab("info") },
+          t("info")
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            role: "tab",
+            className: "dsh-bp-button",
+            "data-blend-tab": "annotations",
+            "data-active": panelTab === "annotations" ? "true" : "false",
+            "aria-selected": panelTab === "annotations",
+            onClick: () => setPanelTab("annotations"),
+          },
+          t("annotations") + (annotations.length > 0 ? ` (${annotations.length})` : "")
+        )
+      );
+
+      const annotationList = annotations.length === 0
+        ? React.createElement("p", { className: "dsh-bp-text", style: { color: "inherit", opacity: 0.6 } }, t("noAnnotations"))
+        : React.createElement(
+            "div",
+            { className: "dsh-ba-list", "data-blend-annotations": true },
+            annotations.map((item, index) =>
+              React.createElement(
+                "div",
+                { className: "dsh-ba-item", key: item.id, "data-selected": item.id === selectedId ? "true" : "false", style: item.id === selectedId ? { background: "var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.04))" } : undefined },
+                React.createElement("span", { className: "dsh-ba-num" }, String(index + 1)),
+                React.createElement(
+                  "div",
+                  { style: { minWidth: 0 } },
+                  React.createElement("div", { className: "dsh-ba-selector" }, item.resolved ? selectorOf(item.resolved, item.target) : item.hit.nodeName),
+                  React.createElement(
+                    "div",
+                    { className: "dsh-ba-meta" },
+                    t(TARGET_LABEL[item.target]) + " · " + t(PRECISION_LABEL[item.resolved ? item.resolved.precision : "object"] || "precisionObject") + (item.stale ? " · " + t("stale") : "")
+                  ),
+                  item.comment ? React.createElement("p", null, item.comment) : null
+                ),
+                React.createElement(
+                  "div",
+                  { className: "dsh-ba-row", style: { flexWrap: "nowrap" } },
+                  React.createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className: "dsh-bp-button",
+                      onClick: () => {
+                        viewerRef.current?.setView(item.view);
+                        setSelectedId(item.id);
+                      },
+                    },
+                    t("goTo")
+                  ),
+                  React.createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className: "dsh-bp-button",
+                      onClick: () => {
+                        setAnnotations((items) => items.filter((entry) => entry.id !== item.id));
+                        if (selectedId === item.id) setSelectedId(null);
+                      },
+                    },
+                    t("remove")
+                  )
+                )
+              )
+            )
+          );
+
+      const infoContent = scene === null
           ? React.createElement("p", { className: "dsh-bp-text" }, t("noSceneInfo"))
           : React.createElement(
               React.Fragment,
@@ -656,23 +1416,43 @@ window.__ModuleLoader__.load({
                   ? React.createElement("span", null, `${t("collections")}: ${formatCount(counts.collections)}`)
                   : null
               )
-            )
+            );
+
+      const panel = React.createElement(
+        "div",
+        { className: "dsh-bp-panel", "data-blend-panel": true, "data-open": panelOpen ? "true" : "false" },
+        tabs,
+        panelTab === "annotations" ? annotationList : infoContent
       );
 
       return React.createElement(
         "div",
         {
-          "data-preview-blender": true,
+          "data-blender-annotate": true,
           "data-blend-state": state,
           "data-blend-triangles": String(triangles),
         },
         toolbar,
         viewport,
-        panel
+        panel,
+        sketch === null
+          ? null
+          : React.createElement(SketchEditor, {
+              src: sketch.src,
+              width: sketch.width,
+              height: sketch.height,
+              t,
+              onCancel: () => setSketch(null),
+              onCommit: async (file) => {
+                if (attachFiles([file])) flash(t("sketchAdded"));
+                else flash(t("sendFailed"));
+                setSketch(null);
+              },
+            })
       );
     }
 
-    const inject = ["slots", "locale", "resources", "documentPreviews"];
+    const inject = ["slots", "locale", "resources", "documentPreviews", "sessions"];
 
     /**
      * Register the Blender renderer and its body for the plugin's lifetime.
@@ -681,9 +1461,16 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       installStyle();
       const t = ctx.locale.bind(NS);
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), "preview-blender: dictionaries");
+      ctx.effect(() => ctx.locale.register(NS, { zh, en }), "blender-annotate: dictionaries");
       const config = configuredConfig();
-      const bodyInject = () => ({ routePath: config.routePath, t });
+      // Composer attachments go through the session's conversation service, as in dsh-preview-snip.
+      const createDraftsFor = (sessionId) => (files) => {
+        const scope = ctx.sessions?.scope?.(sessionId);
+        const conversation = scope?.get?.("conversation");
+        if (conversation === undefined) throw new Error("conversation unavailable");
+        return conversation.createDrafts(sessionId, files).map((draft) => draft.id);
+      };
+      const bodyInject = () => ({ routePath: config.routePath, t, createDraftsFor });
       ctx.effect(
         () =>
           ctx.documentPreviews.register({
@@ -695,7 +1482,7 @@ window.__ModuleLoader__.load({
             loading: "renderer",
             wrap: false,
           }),
-        "preview-blender: metadata"
+        "blender-annotate: metadata"
       );
       ctx.effect(
         () =>
@@ -710,7 +1497,7 @@ window.__ModuleLoader__.load({
               BlendBody
             )
           ),
-        "preview-blender: body"
+        "blender-annotate: body"
       );
     }
 

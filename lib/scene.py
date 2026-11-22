@@ -11,7 +11,22 @@ document describing the scene for the preview's information panel. Everything
 is written through `*.part` files and renamed, so the Host never serves a
 half-written artifact.
 
-The script has no dependencies beyond Blender's own `bpy`.
+The script has no dependencies beyond Blender's own `bpy` and `numpy`.
+
+dsh-blender-annotate additions: before exporting, every mesh datablock gets
+three in-memory attributes (the .blend file is never saved):
+
+  _dsh_face  FACE   source polygon index + 1   (0 = made by a modifier)
+  _dsh_vert  POINT  source vertex index + 1
+  _dsh_src   FACE   index into `annotate.meshes` + 1 (which mesh a face came
+                    from; differs from the object's own mesh for Boolean cutters)
+
+Blender propagates generic attributes through modifiers, and the glTF exporter
+writes `_`-prefixed attributes as custom vertex attributes (`_DSH_FACE`, ...)
+with `export_attributes=True`. The scene JSON gains `annotate`: the source
+(pre-modifier) geometry of each mesh and the transforms, modifier stacks and
+custom properties of each object, so the viewer can turn any picked point into
+object / face / edge / vertex / in-face parameters.
 """
 
 import json
@@ -22,11 +37,132 @@ import time
 import traceback
 
 import bpy
+import numpy as np
 from mathutils import Vector
 
 # Bumped when the JSON contract or the export calls change; the Host folds this
 # into its cache key, so an upgrade re-converts rather than serving stale data.
-RECIPE = 1
+RECIPE = 2
+
+# Source geometry beyond this many vertices (summed over meshes) is not written
+# to the scene JSON; those meshes still carry face/vertex ids in the GLB.
+MAX_SOURCE_VERTICES = 400_000
+
+
+def json_value(value):
+    """A JSON-safe copy of a custom property value, or None to skip it."""
+    if isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "to_list"):
+        value = value.to_list()
+    elif hasattr(value, "to_dict"):
+        value = value.to_dict()
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return None
+
+
+def matrix_rows(matrix):
+    return [[round(float(matrix[r][c]), 7) for c in range(4)] for r in range(4)]
+
+
+def tag_sources():
+    """Tag every mesh with source ids and describe the source geometry."""
+    mesh_list, mesh_index = [], {}
+    for ob in bpy.data.objects:
+        if ob.type == "MESH" and ob.data is not None and ob.data.name_full not in mesh_index:
+            mesh_index[ob.data.name_full] = len(mesh_list)
+            mesh_list.append(ob.data)
+
+    budget = MAX_SOURCE_VERTICES
+    meshes = []
+    for i, me in enumerate(mesh_list):
+        entry = {
+            "name": me.name,
+            "faces": len(me.polygons),
+            "edges": len(me.edges),
+            "vertices": len(me.vertices),
+            "tagged": False,
+            "geometry": None,
+        }
+        try:
+            if me.library is not None:
+                raise RuntimeError("linked library mesh is read-only")
+            for name, domain, count, fill in (
+                ("_dsh_face", "FACE", len(me.polygons), None),
+                ("_dsh_vert", "POINT", len(me.vertices), None),
+                ("_dsh_src", "FACE", len(me.polygons), i + 1),
+            ):
+                if name in me.attributes:
+                    me.attributes.remove(me.attributes[name])
+                attribute = me.attributes.new(name, "INT", domain)
+                values = np.arange(1, count + 1, dtype=np.int32) if fill is None else np.full(count, fill, dtype=np.int32)
+                attribute.data.foreach_set("value", values)
+            me.update()
+            entry["tagged"] = True
+        except Exception as error:  # keep exporting; this mesh is identified at object level only
+            entry["tag_error"] = str(error)
+
+        if len(me.vertices) <= budget:
+            budget -= len(me.vertices)
+            co = np.empty(len(me.vertices) * 3, dtype=np.float32)
+            me.vertices.foreach_get("co", co)
+            loop_start = np.empty(len(me.polygons), dtype=np.int32)
+            loop_total = np.empty(len(me.polygons), dtype=np.int32)
+            me.polygons.foreach_get("loop_start", loop_start)
+            me.polygons.foreach_get("loop_total", loop_total)
+            loop_vertex = np.empty(len(me.loops), dtype=np.int32)
+            loop_edge = np.empty(len(me.loops), dtype=np.int32)
+            me.loops.foreach_get("vertex_index", loop_vertex)
+            me.loops.foreach_get("edge_index", loop_edge)
+            edge_vertices = np.empty(len(me.edges) * 2, dtype=np.int32)
+            me.edges.foreach_get("vertices", edge_vertices)
+            material_index = np.empty(len(me.polygons), dtype=np.int32)
+            me.polygons.foreach_get("material_index", material_index)
+            entry["geometry"] = {
+                "co": np.round(co, 6).tolist(),
+                "loop_start": loop_start.tolist(),
+                "loop_total": loop_total.tolist(),
+                "loop_vertex": loop_vertex.tolist(),
+                "loop_edge": loop_edge.tolist(),
+                "edge_vertices": edge_vertices.tolist(),
+                "material_index": material_index.tolist(),
+                "materials": [m.name if m else None for m in me.materials],
+            }
+        meshes.append(entry)
+
+    objects = {}
+    for ob in bpy.data.objects:
+        custom = {}
+        for key in ob.keys():
+            if key.startswith("_") or key in {"cycles", "cycles_visibility"}:
+                continue
+            value = json_value(ob[key])
+            if value is not None:
+                custom[key] = value
+        modifiers = []
+        for modifier in ob.modifiers:
+            item = {"name": modifier.name, "type": modifier.type, "show_render": modifier.show_render}
+            operand = getattr(modifier, "object", None)
+            if operand is not None:
+                item["object"] = operand.name
+            modifiers.append(item)
+        objects[ob.name] = {
+            "type": ob.type,
+            "data": ob.data.name if ob.data is not None else None,
+            "mesh": mesh_index.get(ob.data.name_full, -1) if ob.type == "MESH" and ob.data is not None else -1,
+            "matrix_world": matrix_rows(ob.matrix_world),
+            "parent": ob.parent.name if ob.parent is not None else None,
+            "collections": [c.name for c in ob.users_collection],
+            "modifiers": modifiers,
+            "material_slots": [slot.material.name if slot.material else None for slot in ob.material_slots],
+            "custom": custom,
+            "library": ob.library.filepath if ob.library is not None else None,
+        }
+    bpy.context.view_layer.update()
+    return {"version": 1, "meshes": meshes, "objects": objects}
 
 
 def main():
@@ -142,6 +278,7 @@ def main():
         "objects": objects,
         "materials": list(materials_seen.values()),
     }
+    info["annotate"] = tag_sources()
 
     # The exporter rewrites the filepath to end in `.glb`, so the temporary name
     # has to keep that suffix and only gain a `.part` marker.
@@ -156,6 +293,7 @@ def main():
         export_cameras=False,
         export_lights=False,
         export_yup=True,
+        export_attributes=True,
     )
     if not os.path.exists(glb_tmp) or os.path.getsize(glb_tmp) == 0:
         raise RuntimeError("glTF exporter produced no GLB")

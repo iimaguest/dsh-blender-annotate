@@ -38,15 +38,15 @@ async function mountClient(globals = {}) {
 
 test("the bundle registers under the package id and exports the body face", async () => {
   const { registration, exports } = await mountClient();
-  assert.equal(registration.id, "dsh-preview-blender");
-  assert.deepEqual(Array.from(exports.inject), ["slots", "locale", "resources", "documentPreviews"]);
+  assert.equal(registration.id, "dsh-blender-annotate");
+  assert.deepEqual(Array.from(exports.inject), ["slots", "locale", "resources", "documentPreviews", "sessions"]);
   assert.equal(typeof exports.apply, "function");
   assert.equal(typeof exports.__createViewer, "function");
 });
 
 test("apply registers a .blend renderer, its body slot and both dictionaries", async () => {
   const { exports } = await mountClient({
-    __DSH_PREVIEW_BLENDER_CONFIG__: { routePath: "/api/custom-blend", extensions: ["blend", "blend1"] },
+    __DSH_BLENDER_ANNOTATE_CONFIG__: { routePath: "/api/custom-blend", extensions: ["blend", "blend1"] },
   });
   const renderers = [];
   const slots = [];
@@ -71,15 +71,15 @@ test("apply registers a .blend renderer, its body slot and both dictionaries", a
   };
   exports.apply(ctx);
   assert.equal(renderers.length, 1);
-  assert.equal(renderers[0].id, "dsh-preview-blender/scene");
+  assert.equal(renderers[0].id, "dsh-blender-annotate/scene");
   assert.deepEqual(Array.from(renderers[0].extensions), ["blend", "blend1"]);
   assert.deepEqual(Array.from(renderers[0].binaryExtensions), ["blend", "blend1"]);
   assert.equal(renderers[0].priority, "extension");
   assert.equal(renderers[0].loading, "renderer");
   assert.equal(renderers[0].wrap, false);
   assert.equal(slots.length, 1);
-  assert.equal(slots[0].spec.key, "dsh-preview-blender/scene");
-  assert.equal(slots[0].spec.locale, "previewBlender");
+  assert.equal(slots[0].spec.key, "dsh-blender-annotate/scene");
+  assert.equal(slots[0].spec.locale, "blenderAnnotate");
   assert.equal(typeof slots[0].body, "function");
   const injected = slots[0].spec.inject();
   assert.equal(injected.routePath, "/api/custom-blend");
@@ -101,6 +101,6 @@ test("a missing injected config falls back to the Host defaults", async () => {
   };
   exports.apply(ctx);
   assert.deepEqual(Array.from(renderers[0].extensions), ["blend"]);
-  assert.equal(slots[0].inject().routePath, "/api/preview/blender");
+  assert.equal(slots[0].inject().routePath, "/api/blender-annotate");
 });
 

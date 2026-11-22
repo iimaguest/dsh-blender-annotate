@@ -1,5 +1,5 @@
 /**
- * Minimal dependency-free glTF 2.0 (GLB) viewer used by dsh-preview-blender.
+ * Minimal dependency-free glTF 2.0 (GLB) viewer used by dsh-blender-annotate.
  *
  * This file is the standalone development copy of the renderer that also lives
  * inside lib/client.js (the DSH client bundle is a single CJS factory, so it
@@ -45,6 +45,10 @@
 
     var primitives = [];
     var bbox = null;
+    // dsh-blender-annotate: highlight overlay (glTF world positions) and view callbacks.
+    var overlay = { faces: null, lines: null, faceColor: [1, 0.72, 0.18, 0.38], lineColor: [1, 0.85, 0.3, 1] };
+    var onView = typeof settings.onView === "function" ? settings.onView : null;
+    var onClick = typeof settings.onClick === "function" ? settings.onClick : null;
     var grid = null;
     var axes = createAxes();
     var modelLocations = {
@@ -154,8 +158,177 @@
       }
       gl.disable(gl.POLYGON_OFFSET_FILL);
 
+      drawOverlay();
       if (grid !== null) drawGrid();
       drawAxes();
+      if (onView !== null) onView();
+    }
+
+    function drawOverlay() {
+      if (overlay.faces === null && overlay.lines === null) return;
+      gl.useProgram(lineProgram);
+      gl.uniformMatrix4fv(lineUniforms.uViewProj, false, viewProjection);
+      gl.uniform1f(lineUniforms.uOpacity, 1);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(false);
+      if (overlay.faces !== null) {
+        gl.enable(gl.POLYGON_OFFSET_FILL);
+        gl.polygonOffset(-2, -2);
+        bindLines(overlay.faces);
+        gl.drawArrays(gl.TRIANGLES, 0, overlay.faces.count);
+        gl.disable(gl.POLYGON_OFFSET_FILL);
+      }
+      if (overlay.lines !== null) {
+        gl.disable(gl.DEPTH_TEST);
+        bindLines(overlay.lines);
+        gl.drawArrays(gl.LINES, 0, overlay.lines.count);
+        gl.enable(gl.DEPTH_TEST);
+      }
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+
+    function uploadColored(positions, color) {
+      var count = positions.length / 3;
+      var colors = new Float32Array(count * 4);
+      for (var i = 0; i < count; i += 1) colors.set(color, i * 4);
+      return { positions: uploadArray(gl, positions instanceof Float32Array ? positions : new Float32Array(positions)), colors: uploadArray(gl, colors), count: count };
+    }
+
+    /** Replace the highlight: face triangles and line segments, both glTF-world xyz lists. */
+    function setOverlay(next) {
+      if (overlay.faces !== null) destroyBufferSet(overlay.faces);
+      if (overlay.lines !== null) destroyBufferSet(overlay.lines);
+      overlay.faces = next && next.faces && next.faces.length ? uploadColored(next.faces, next.faceColor || overlay.faceColor) : null;
+      overlay.lines = next && next.lines && next.lines.length ? uploadColored(next.lines, next.lineColor || overlay.lineColor) : null;
+      dirty = true;
+    }
+
+    /** Camera ray through a client-space point, in glTF world space. */
+    function rayAt(clientX, clientY) {
+      var rect = canvas.getBoundingClientRect();
+      var x = ((clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
+      var y = 1 - ((clientY - rect.top) / Math.max(rect.height, 1)) * 2;
+      var inverse = m4invert(viewProjection);
+      if (inverse === null) return null;
+      var unproject = function (z) {
+        var p = [x, y, z, 1];
+        var o = [0, 0, 0, 0];
+        for (var r = 0; r < 4; r += 1) o[r] = inverse[r] * p[0] + inverse[4 + r] * p[1] + inverse[8 + r] * p[2] + inverse[12 + r] * p[3];
+        return [o[0] / o[3], o[1] / o[3], o[2] / o[3]];
+      };
+      var near = unproject(-1);
+      var far = unproject(1);
+      return { origin: near, direction: normalize(sub(far, near)) };
+    }
+
+    /** Nearest surface hit under a client-space point, with every id the GLB carries. */
+    function pick(clientX, clientY) {
+      var ray = rayAt(clientX, clientY);
+      if (ray === null) return null;
+      var o = ray.origin, d = ray.direction;
+      var best = null;
+      for (var p = 0; p < primitives.length; p += 1) {
+        var cpu = primitives[p].cpu;
+        if (!cpu || !rayHitsBox(o, d, cpu.min, cpu.max)) continue;
+        var pos = cpu.positions, idx = cpu.indices;
+        for (var t = 0; t + 2 < idx.length; t += 3) {
+          var ia = idx[t] * 3, ib = idx[t + 1] * 3, ic = idx[t + 2] * 3;
+          var e1x = pos[ib] - pos[ia], e1y = pos[ib + 1] - pos[ia + 1], e1z = pos[ib + 2] - pos[ia + 2];
+          var e2x = pos[ic] - pos[ia], e2y = pos[ic + 1] - pos[ia + 1], e2z = pos[ic + 2] - pos[ia + 2];
+          var px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+          var det = e1x * px + e1y * py + e1z * pz;
+          if (Math.abs(det) < 1e-12) continue;
+          var inv = 1 / det;
+          var sx = o[0] - pos[ia], sy = o[1] - pos[ia + 1], sz = o[2] - pos[ia + 2];
+          var u = (sx * px + sy * py + sz * pz) * inv;
+          if (u < 0 || u > 1) continue;
+          var qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+          var v = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+          if (v < 0 || u + v > 1) continue;
+          var dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+          if (dist <= 1e-9 || (best !== null && dist >= best.distance)) continue;
+          best = { primitive: p, triangle: t / 3, distance: dist, u: u, v: v, normal: normalize(cross([e1x, e1y, e1z], [e2x, e2y, e2z])) };
+        }
+      }
+      if (best === null) return null;
+      var prim = primitives[best.primitive];
+      var c = prim.cpu;
+      var corners = [c.indices[best.triangle * 3], c.indices[best.triangle * 3 + 1], c.indices[best.triangle * 3 + 2]];
+      var w = [1 - best.u - best.v, best.u, best.v];
+      var uv = null;
+      if (c.uvs) {
+        uv = [0, 0];
+        for (var k = 0; k < 3; k += 1) { uv[0] += c.uvs[corners[k] * 2] * w[k]; uv[1] += c.uvs[corners[k] * 2 + 1] * w[k]; }
+        uv[1] = 1 - uv[1]; // glTF flips V relative to Blender
+      }
+      var normal = best.normal;
+      if (dot(normal, d) > 0) normal = [-normal[0], -normal[1], -normal[2]];
+      return {
+        point: [o[0] + d[0] * best.distance, o[1] + d[1] * best.distance, o[2] + d[2] * best.distance],
+        normal: normal,
+        uv: uv,
+        faceId: c.faceIds ? Math.round(c.faceIds[corners[0]]) : 0,
+        srcId: c.srcIds ? Math.round(c.srcIds[corners[0]]) : 0,
+        vertIds: c.vertIds ? corners.map(function (i) { return Math.round(c.vertIds[i]); }) : null,
+        nodeName: prim.node.name,
+        nodeIndex: prim.node.index,
+        nodeWorld: Array.prototype.slice.call(prim.node.world),
+      };
+    }
+
+    function rayHitsBox(o, d, min, max) {
+      var tmin = -Infinity, tmax = Infinity;
+      for (var a = 0; a < 3; a += 1) {
+        if (Math.abs(d[a]) < 1e-12) { if (o[a] < min[a] || o[a] > max[a]) return false; continue; }
+        var t1 = (min[a] - o[a]) / d[a], t2 = (max[a] - o[a]) / d[a];
+        tmin = Math.max(tmin, Math.min(t1, t2));
+        tmax = Math.min(tmax, Math.max(t1, t2));
+      }
+      return tmax >= Math.max(tmin, 0);
+    }
+
+    /** glTF-world triangles of one source face (or a whole node when faceId is null). */
+    function trianglesOf(nodeIndex, srcId, faceId) {
+      var out = [];
+      for (var p = 0; p < primitives.length; p += 1) {
+        var prim = primitives[p];
+        if (prim.node.index !== nodeIndex || !prim.cpu) continue;
+        var c = prim.cpu;
+        for (var t = 0; t + 2 < c.indices.length; t += 3) {
+          var first = c.indices[t];
+          if (faceId !== null && (!c.faceIds || Math.round(c.faceIds[first]) !== faceId || Math.round(c.srcIds ? c.srcIds[first] : 0) !== srcId)) continue;
+          for (var k = 0; k < 3; k += 1) {
+            var i = c.indices[t + k] * 3;
+            out.push(c.positions[i], c.positions[i + 1], c.positions[i + 2]);
+          }
+        }
+      }
+      return new Float32Array(out);
+    }
+
+    /** Client-space position of a glTF-world point, and whether it is in front of the camera. */
+    function project(point) {
+      var m = viewProjection;
+      var x = m[0] * point[0] + m[4] * point[1] + m[8] * point[2] + m[12];
+      var y = m[1] * point[0] + m[5] * point[1] + m[9] * point[2] + m[13];
+      var w = m[3] * point[0] + m[7] * point[1] + m[11] * point[2] + m[15];
+      var rect = canvas.getBoundingClientRect();
+      if (w <= 1e-9) return { x: 0, y: 0, visible: false };
+      return { x: ((x / w + 1) / 2) * rect.width, y: ((1 - y / w) / 2) * rect.height, visible: true };
+    }
+
+    /** Is the point the first surface hit along its camera ray (not hidden behind other geometry)? */
+    function isUnoccluded(point) {
+      var screen = project(point);
+      if (!screen.visible) return false;
+      var rect = canvas.getBoundingClientRect();
+      var hit = pick(rect.left + screen.x, rect.top + screen.y);
+      if (hit === null) return true;
+      var toPoint = Math.hypot(point[0] - camera.eye[0], point[1] - camera.eye[1], point[2] - camera.eye[2]);
+      var toHit = Math.hypot(hit.point[0] - camera.eye[0], hit.point[1] - camera.eye[1], hit.point[2] - camera.eye[2]);
+      return toPoint <= toHit + state.radius * 0.01;
     }
 
     function drawGrid() {
@@ -366,7 +539,9 @@
       var dy = event.clientY - pointer.y;
       pointer.x = event.clientX;
       pointer.y = event.clientY;
-      pointer.moved = pointer.moved || Math.abs(dx) + Math.abs(dy) > 1;
+      pointer.travel = (pointer.travel || 0) + Math.abs(dx) + Math.abs(dy);
+      pointer.moved = pointer.moved || pointer.travel > 4;
+      if (!pointer.moved) return;
       if (pointer.button === 0) {
         state.yaw -= dx * 0.0075;
         state.pitch = clamp(state.pitch + dy * 0.0065, -1.45, 1.45);
@@ -376,6 +551,9 @@
       dirty = true;
     }
     function onPointerUp(event) {
+      if (pointer !== null && pointer.id === event.pointerId && pointer.button === 0 && !pointer.moved && onClick !== null) {
+        onClick(event.clientX, event.clientY, event);
+      }
       if (pointer !== null && pointer.id === event.pointerId) {
         canvas.releasePointerCapture?.(event.pointerId);
         pointer = null;
@@ -425,6 +603,15 @@
     return {
       setModel: setModel,
       resetView: fit,
+      pick: pick,
+      project: project,
+      isUnoccluded: isUnoccluded,
+      trianglesOf: trianglesOf,
+      setOverlay: setOverlay,
+      getView: function () { return { yaw: state.yaw, pitch: state.pitch, distance: state.distance, target: state.target.slice() }; },
+      setView: function (v) { if (!v) return; state.yaw = v.yaw; state.pitch = v.pitch; state.distance = v.distance; state.target = v.target.slice(); dirty = true; },
+      redraw: function () { dirty = true; },
+      canvas: canvas,
       setWireframe: function (value) { state.wireframe = value === true; dirty = true; },
       setAutoRotate: function (value) { state.autoRotate = value === true; lastTime = 0; dirty = true; },
       isWireframe: function () { return state.wireframe; },
@@ -442,6 +629,7 @@
         canvas.removeEventListener("dblclick", onDoubleClick);
         canvas.removeEventListener("keydown", onKeyDown);
         for (var i = 0; i < primitives.length; i += 1) destroyPrimitive(primitives[i]);
+        setOverlay(null);
         if (grid !== null) destroyBufferSet(grid);
         destroyBufferSet(axes);
         gl.deleteBuffer(shadowQuad.buffer);
@@ -521,7 +709,7 @@
         var mesh = parsed.meshes[node.mesh];
         if (mesh) {
           for (var p = 0; p < (mesh.primitives || []).length; p += 1) {
-            var built = buildPrimitive(gl, parsed, mesh.primitives[p], materials, world, bbox);
+            var built = buildPrimitive(gl, parsed, mesh.primitives[p], materials, world, bbox, { index: nodeIndex, name: node.name || "node " + nodeIndex, world: world });
             if (built === null) continue;
             primitives.push(built.primitive);
             triangles += built.triangles;
@@ -538,7 +726,7 @@
     return { primitives: primitives, bbox: bbox, triangles: triangles, vertices: vertices };
   }
 
-  function buildPrimitive(gl, parsed, primitive, materials, world, bbox) {
+  function buildPrimitive(gl, parsed, primitive, materials, world, bbox, nodeInfo) {
     if ((primitive.mode === undefined ? 4 : primitive.mode) !== 4) return null;
     var positionAccessor = parsed.accessors[primitive.attributes.POSITION];
     if (!positionAccessor) return null;
@@ -549,6 +737,11 @@
     var indices = primitive.indices === undefined ? null : readAccessor(parsed, parsed.accessors[primitive.indices]);
 
     var count = positions.length / 3;
+    var attributeOf = function (name) {
+      return primitive.attributes[name] === undefined ? null : readAccessor(parsed, parsed.accessors[primitive.attributes[name]]);
+    };
+    var primMin = [Infinity, Infinity, Infinity];
+    var primMax = [-Infinity, -Infinity, -Infinity];
     var bakedPositions = new Float32Array(positions.length);
     var bakedNormals = new Float32Array(positions.length);
     var normalMatrix = normalMatrixOf(world);
@@ -578,6 +771,12 @@
       if (px > bbox.max[0]) bbox.max[0] = px;
       if (py > bbox.max[1]) bbox.max[1] = py;
       if (pz > bbox.max[2]) bbox.max[2] = pz;
+      if (px < primMin[0]) primMin[0] = px;
+      if (py < primMin[1]) primMin[1] = py;
+      if (pz < primMin[2]) primMin[2] = pz;
+      if (px > primMax[0]) primMax[0] = px;
+      if (py > primMax[1]) primMax[1] = py;
+      if (pz > primMax[2]) primMax[2] = pz;
     }
 
     var indexArray;
@@ -606,6 +805,17 @@
       roughness: material.roughness,
       metallic: material.metallic,
       doubleSided: material.doubleSided,
+      node: nodeInfo || { index: -1, name: "", world: world },
+      cpu: {
+        positions: bakedPositions,
+        indices: indexArray,
+        faceIds: attributeOf("_DSH_FACE"),
+        srcIds: attributeOf("_DSH_SRC"),
+        vertIds: attributeOf("_DSH_VERT"),
+        uvs: attributeOf("TEXCOORD_0"),
+        min: primMin,
+        max: primMax,
+      },
     };
     return { primitive: primitiveRecord, triangles: triangleCount, vertices: count };
   }
