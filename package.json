@@ -59,6 +59,12 @@
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "test": "node --test test/*.test.js",
-    "fixture": "blender -b --factory-startup --python test/fixtures/make_fixture.py -- test/fixtures/annotate-fixture.blend && blender -b --disable-autoexec test/fixtures/annotate-fixture.blend --python lib/scene.py -- test/fixtures/annotate-fixture.glb test/fixtures/annotate-fixture.json 1"
+    "fixture": "blender -b --factory-startup --python test/fixtures/make_fixture.py -- test/fixtures/annotate-fixture.blend && blender -b --disable-autoexec test/fixtures/annotate-fixture.blend --python lib/scene.py -- test/fixtures/annotate-fixture.glb test/fixtures/annotate-fixture.json 1",
+    "test:independent": "node --test test/independent/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }

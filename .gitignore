@@ -1,7 +1,7 @@
-node_modules/
 *.tgz
 dev/model.glb
 dev/scene.json
 dev/shot-*.png
-scripts/shots/
+node_modules/
 scripts/fixtures/
+scripts/shots/
